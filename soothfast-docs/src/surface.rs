@@ -904,7 +904,7 @@ mod tests {
         };
         json!({
             "index": {
-                "1": { "visibility": "public", "inner": { "module": { "items": [2, 3, 4, 5, 8, 9] } } },
+                "1": { "visibility": "public", "inner": { "module": { "items": [2, 3, 4, 5, 8, 9, 10] } } },
                 "2": use_("named", 20, false),
                 "3": use_("indicators", 21, false),
                 "4": use_("prelude", 22, true),
@@ -913,6 +913,7 @@ mod tests {
                 "7": use_("Two", 24, false),
                 "8": use_("inner", 6, true),
                 "9": use_("fmt", 30, false),
+                "10": use_("renamed", 25, false),
             },
             "paths": {
                 "1": { "crate_id": 0, "path": ["a"], "kind": "module" },
@@ -922,6 +923,7 @@ mod tests {
                 "22": { "crate_id": 1, "path": ["b", "prelude"], "kind": "module" },
                 "23": { "crate_id": 1, "path": ["b", "Counter"], "kind": "struct" },
                 "24": { "crate_id": 1, "path": ["b", "Two"], "kind": "struct" },
+                "25": { "crate_id": 1, "path": ["b"], "kind": "module" },
                 "30": { "crate_id": 2, "path": ["std", "fmt"], "kind": "module" },
             },
             "external_crates": { "1": { "name": "b" }, "2": { "name": "std" } },
@@ -970,6 +972,15 @@ mod tests {
         let surface = from_rustdoc_with(&facade_doc(), Path::new("."), &dependency_b());
         assert_eq!(surface.items["a::indicators"].kind, "module");
         assert_eq!(surface.items["a::indicators::sma"].fingerprint, 4);
+    }
+
+    #[test]
+    fn a_renamed_crate_reexport_brings_everything_below_the_crate() {
+        let surface = from_rustdoc_with(&facade_doc(), Path::new("."), &dependency_b());
+        assert_eq!(surface.items["a::renamed"].kind, "module");
+        assert_eq!(surface.items["a::renamed::named"].fingerprint, 2);
+        assert_eq!(surface.items["a::renamed::indicators::sma"].fingerprint, 4);
+        assert_eq!(surface.members["a::renamed::Counter::new"].fingerprint, 9);
     }
 
     #[test]

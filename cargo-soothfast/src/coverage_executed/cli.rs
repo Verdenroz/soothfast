@@ -6,6 +6,7 @@ use serde_json::json;
 
 use super::regions::{self, Declared};
 use crate::config::{Config, Group};
+use crate::coverage_report::executed::{Want, Wants, gather};
 use crate::invoke::{self, CommonArgs};
 
 /// Items are `tested` and `measured`; a column that was not run is absent.
@@ -20,7 +21,10 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 struct Flags {
+    /// The bench build: `--bench`, and `--bench-features`.
     common: CommonArgs,
+    /// The features of the surface and the test build.
+    features: Option<String>,
     tests: bool,
     benches: bool,
     json: bool,
@@ -29,6 +33,7 @@ struct Flags {
 fn parse(args: &[String]) -> Result<Flags, String> {
     let mut flags = Flags {
         common: CommonArgs::default(),
+        features: None,
         tests: false,
         benches: false,
         json: false,
@@ -39,6 +44,8 @@ fn parse(args: &[String]) -> Result<Flags, String> {
             "--tests" => flags.tests = true,
             "--benches" => flags.benches = true,
             "--json" => flags.json = true,
+            "--features" => flags.features = it.next().cloned(),
+            "--bench-features" => flags.common.features = it.next().cloned(),
             other if flags.common.try_parse(other, &mut it) => {}
             other => return Err(format!("unknown coverage executed arg {other:?}")),
         }
@@ -51,43 +58,39 @@ fn parse(args: &[String]) -> Result<Flags, String> {
 }
 
 /// Fill the flags the way `coverage report` resolves them, so a run stored
-/// here is the one the report looks up.
-fn resolve(common: &mut CommonArgs, config: &Config) -> Result<(), String> {
-    let pkgs: Vec<String> = common.pkg.iter().cloned().collect();
-    if common.features.is_none() {
-        common.features = config.resolve_coverage(&pkgs)?.features;
+/// here is the one the report looks up: the surface and tests take the
+/// coverage features, the bench build the gate's.
+fn resolve(flags: &mut Flags, config: &Config) -> Result<(), String> {
+    let pkgs: Vec<String> = flags.common.pkg.iter().cloned().collect();
+    if flags.features.is_none() {
+        flags.features = config.resolve_coverage(&pkgs)?.features;
     }
-    config.fill(common, Group::Docs, &pkgs).map(|_| ())
+    config
+        .fill(&mut flags.common, Group::Gate, &pkgs)
+        .map(|_| ())
 }
 
 fn execute(args: &[String]) -> Result<(), String> {
     let mut flags = parse(args)?;
-    resolve(&mut flags.common, &Config::load(&invoke::project_root())?)?;
+    resolve(&mut flags, &Config::load(&invoke::project_root())?)?;
     let pkg = flags
         .common
         .pkg
         .as_deref()
         .ok_or("coverage executed requires -p PKG")?;
-    let features = flags.common.features.as_deref();
+    let features = flags.features.as_deref();
     let (surface, _, root) = crate::docs_support::surface_in(pkg, None, features)?;
+    let want = |on: bool| if on { Want::Run } else { Want::Skip };
+    let wants = Wants {
+        tests: want(flags.tests),
+        benches: want(flags.benches),
+    };
+    let executed = gather(pkg, &surface, &root, features, &flags.common, wants)?;
     let declared = regions::declared(&surface);
-    let tested = match flags.tests {
-        true => Some(regions::executed(
-            &declared,
-            &root,
-            &super::tests(pkg, features)?,
-        )),
-        false => None,
+    let columns = Columns {
+        tested: executed.tested.as_ref(),
+        measured: executed.measured.as_ref(),
     };
-    let measured = match flags.benches {
-        true => Some(regions::executed(
-            &declared,
-            &root,
-            &super::benches(&flags.common)?,
-        )),
-        false => None,
-    };
-    let columns = Columns { tested, measured };
     if flags.json {
         println!("{}", columns.json(pkg, &declared));
     } else {
@@ -97,8 +100,8 @@ fn execute(args: &[String]) -> Result<(), String> {
 }
 
 struct Columns<'a> {
-    tested: Option<BTreeSet<&'a str>>,
-    measured: Option<BTreeSet<&'a str>>,
+    tested: Option<&'a BTreeSet<String>>,
+    measured: Option<&'a BTreeSet<String>>,
 }
 
 impl Columns<'_> {
@@ -107,9 +110,9 @@ impl Columns<'_> {
             .iter()
             .map(|d| {
                 let mut item = json!({ "path": d.path, "kind": d.kind });
-                for (name, set) in [("tested", &self.tested), ("measured", &self.measured)] {
+                for (name, set) in [("tested", self.tested), ("measured", self.measured)] {
                     if let Some(set) = set {
-                        item[name] = json!(set.contains(d.path.as_str()));
+                        item[name] = json!(set.contains(&d.path));
                     }
                 }
                 item
@@ -119,17 +122,17 @@ impl Columns<'_> {
     }
 
     fn print(&self, declared: &[Declared<'_>]) {
-        let mark = |set: &Option<BTreeSet<&str>>, path: &str, word: &str| match set {
+        let mark = |set: Option<&BTreeSet<String>>, path: &str, word: &str| match set {
             Some(set) if set.contains(path) => word.to_string(),
             Some(_) => " ".repeat(word.len()),
             None => String::new(),
         };
         for d in declared {
-            let tested = mark(&self.tested, &d.path, "tested");
-            let measured = mark(&self.measured, &d.path, "measured");
+            let tested = mark(self.tested, &d.path, "tested");
+            let measured = mark(self.measured, &d.path, "measured");
             println!("{tested} {measured} {} ({})", d.path, d.kind);
         }
-        for (name, set) in [("tested", &self.tested), ("measured", &self.measured)] {
+        for (name, set) in [("tested", self.tested), ("measured", self.measured)] {
             if let Some(set) = set {
                 println!(
                     "coverage executed: {}/{} public item(s) {name}",
@@ -144,6 +147,14 @@ impl Columns<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test::fixture::TempDir;
+
+    fn config(name: &str, toml: &str) -> Config {
+        let dir = TempDir::new(name);
+        std::fs::create_dir_all(&*dir).unwrap();
+        std::fs::write(dir.join("soothfast.toml"), toml).unwrap();
+        Config::load(&dir).unwrap()
+    }
 
     fn flags(args: &[&str]) -> Result<Flags, String> {
         parse(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>())
@@ -164,17 +175,31 @@ mod tests {
 
     #[test]
     fn the_configured_features_fill_what_a_flag_leaves_unset() {
-        let dir = std::env::temp_dir().join(format!("soothfast-cov-cli-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("soothfast.toml"), "[gate]\nfeatures = \"full\"\n").unwrap();
-        let config = Config::load(&dir).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
-        let mut bare = flags(&["-p", "demo"]).unwrap().common;
+        let config = config(
+            "cov-cli-both",
+            "[package.demo.gate]\nfeatures = \"bench-gate\"\n[package.demo.docs]\nfeatures = \"full\"\n",
+        );
+        let mut bare = flags(&["-p", "demo"]).unwrap();
         resolve(&mut bare, &config).unwrap();
         assert_eq!(bare.features.as_deref(), Some("full"));
-        let mut given = flags(&["-p", "demo", "--features", "lite"]).unwrap().common;
+        assert_eq!(bare.common.features.as_deref(), Some("bench-gate"));
+        let mut given =
+            flags(&["-p", "demo", "--features", "lite", "--bench-features", "b"]).unwrap();
         resolve(&mut given, &config).unwrap();
         assert_eq!(given.features.as_deref(), Some("lite"));
+        assert_eq!(given.common.features.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn a_features_flag_leaves_the_bench_build_to_the_gate() {
+        let config = config(
+            "cov-cli-gate",
+            "[package.demo.gate]\nfeatures = \"bench-gate\"\n",
+        );
+        let mut f = flags(&["-p", "demo", "--features", "lite"]).unwrap();
+        resolve(&mut f, &config).unwrap();
+        assert_eq!(f.features.as_deref(), Some("lite"));
+        assert_eq!(f.common.features.as_deref(), Some("bench-gate"));
     }
 
     #[test]
@@ -189,8 +214,9 @@ mod tests {
             kind: "function",
             spans: &[],
         }];
+        let tested = BTreeSet::from(["demo::run".to_string()]);
         let columns = Columns {
-            tested: Some(BTreeSet::from(["demo::run"])),
+            tested: Some(&tested),
             measured: None,
         };
         assert_eq!(

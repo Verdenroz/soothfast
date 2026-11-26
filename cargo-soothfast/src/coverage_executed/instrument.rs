@@ -22,6 +22,7 @@ pub struct Instrumented<'a> {
     features: Option<&'a str>,
     host: String,
     target_dir: PathBuf,
+    members: &'a [String],
 }
 
 impl<'a> Instrumented<'a> {
@@ -34,13 +35,20 @@ impl<'a> Instrumented<'a> {
             features,
             host,
             target_dir,
+            members: &[],
         })
+    }
+
+    /// The same build with the tests of `members` run beside the package's.
+    pub fn with_members(self, members: &'a [String]) -> Self {
+        Instrumented { members, ..self }
     }
 
     /// `cargo test` over every test target but the doc tests, which rustdoc
     /// compiles without these flags.
     pub fn tests(&self, no_run: bool) -> Command {
         let mut cmd = self.cargo("test", &self.target_dir, &[]);
+        cmd.args(self.members.iter().flat_map(|m| ["-p", m]));
         cmd.arg("--tests");
         if no_run {
             cmd.args(["--no-run", "--message-format=json"]);
@@ -198,6 +206,7 @@ mod tests {
             features: Some("fast"),
             host: "x86_64-unknown-linux-gnu".into(),
             target_dir: PathBuf::from("/t/soothfast-coverage"),
+            members: &[],
         };
         let cmd = build.tests(true);
         let args: Vec<_> = cmd
@@ -231,6 +240,7 @@ mod tests {
             features: None,
             host: "h".into(),
             target_dir: PathBuf::from("/t"),
+            members: &[],
         };
         let env = |cmd: &Command, key: &str| -> Option<String> {
             cmd.get_envs()
@@ -257,6 +267,7 @@ mod tests {
             features: None,
             host: "h".into(),
             target_dir: PathBuf::from("/t"),
+            members: &[],
         };
         let args = |cmd: Command| -> Vec<String> {
             cmd.get_args()
@@ -284,5 +295,30 @@ mod tests {
             args(build.benches("soothfast", true))
                 .ends_with(&["--no-run".to_string(), "--message-format=json".to_string()])
         );
+    }
+
+    #[test]
+    fn member_tests_build_beside_the_packages() {
+        let members = ["types".to_string()];
+        let build = Instrumented {
+            pkg: "demo",
+            features: None,
+            host: "h".into(),
+            target_dir: PathBuf::from("/t"),
+            members: &[],
+        }
+        .with_members(&members);
+        let args: Vec<_> = build
+            .tests(false)
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.windows(2).any(|w| w == ["-p", "types"]));
+        let benches: Vec<_> = build
+            .benches("soothfast", false)
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(!benches.contains(&"types".to_string()));
     }
 }

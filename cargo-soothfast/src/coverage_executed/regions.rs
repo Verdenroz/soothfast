@@ -124,6 +124,39 @@ pub fn declared(surface: &Surface) -> Vec<Declared<'_>> {
         .collect()
 }
 
+/// The workspace members other than `pkg` whose source files hold a span of
+/// `declared`: the items `pkg` re-exports from them. `members` pairs each
+/// package name with its directory; the deepest directory holding a file owns
+/// it, since the root package's directory holds every member's.
+pub fn foreign_members(
+    declared: &[Declared<'_>],
+    root: &Path,
+    pkg: &str,
+    members: &[(String, PathBuf)],
+) -> BTreeSet<String> {
+    let dirs: Vec<(&str, PathBuf)> = members
+        .iter()
+        .map(|(name, dir)| (name.as_str(), resolved(dir)))
+        .collect();
+    let files: BTreeSet<&Path> = declared
+        .iter()
+        .flat_map(|item| item.spans)
+        .map(|span| Path::new(&span.file))
+        .collect();
+    files
+        .into_iter()
+        .filter_map(|file| {
+            let file = resolved(&root.join(file));
+            dirs.iter()
+                .filter(|(_, dir)| file.starts_with(dir))
+                .max_by_key(|(_, dir)| dir.components().count())
+                .map(|(name, _)| *name)
+        })
+        .filter(|name| *name != pkg)
+        .map(str::to_string)
+        .collect()
+}
+
 /// The declared items any counted region reaches.
 pub fn executed<'d>(
     declared: &'d [Declared<'_>],
@@ -191,6 +224,38 @@ mod tests {
         assert!(r.reaches(Path::new("/ws"), &[span(12, 20)]));
         assert!(!r.reaches(Path::new("/ws"), &[span(13, 20)]));
         assert!(!r.reaches(Path::new("/ws"), &[span(1, 9)]));
+    }
+
+    #[test]
+    fn a_span_in_another_member_names_that_member() {
+        let members = [
+            ("app".to_string(), PathBuf::from("/ws")),
+            ("types".to_string(), PathBuf::from("/ws/types")),
+            ("derive".to_string(), PathBuf::from("/ws/derive")),
+        ];
+        let spans = [
+            [Span {
+                file: "src/lib.rs".into(),
+                begin: 1,
+                end: 2,
+            }],
+            [Span {
+                file: "types/src/ma.rs".into(),
+                begin: 1,
+                end: 2,
+            }],
+        ];
+        let declared: Vec<_> = spans
+            .iter()
+            .enumerate()
+            .map(|(i, spans)| Declared {
+                path: format!("app::f{i}"),
+                kind: "function",
+                spans,
+            })
+            .collect();
+        let found = foreign_members(&declared, Path::new("/ws"), "app", &members);
+        assert_eq!(found, BTreeSet::from(["types".to_string()]));
     }
 
     #[test]

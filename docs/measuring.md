@@ -199,11 +199,30 @@ coverage executed: 9/34 public item(s) measured
 `--tests` or `--benches` runs one column, and `--json` prints
 `{"package", "items": [{"path", "kind", "tested", "measured"}]}` with a
 column left out when it did not run. `--bench NAME` picks the bench target
-(default `soothfast`) and `--features` the feature set.
+(default `soothfast`).
+
+The two builds take separate feature sets. `--features` sets the surface and
+the test build; unset, it is what `coverage report` reads, the package's
+`docs` features and then its `gate` features. `--bench-features` sets the
+bench build; unset, it is the package's `gate` features, which a bench target
+with `required-features` needs to build at all.
 
 The denominator is the public functions, structs, enums, unions and traits of
-the package, plus inherent methods. Trait-impl methods are not items of their
+the package, plus inherent methods, read under the same features and by the
+same code as the `tested` and `measured` columns of `coverage report
+--executed`, so the two commands print the same figures. An item a run cannot
+reach, such as one behind a feature the bench build leaves off, reads not
+executed and stays in the denominator. Trait-impl methods are not items of their
 own, and `#[doc(hidden)]` items are not in the rustdoc surface.
+
+A package that re-exports items of other workspace crates (`pub use
+other_crate::item`) is credited by those crates' tests too. When a counted
+item's span lies in another member, `tested` builds and runs that member's test
+targets beside the package's own, so `finance_query::indicators::wma` counts
+when the crate that defines it tests it. The cost is one more instrumented test
+build and run per such member, a stored run stays valid until any file of the
+package or its workspace dependencies changes, and a member only ever adds
+credit: its tests never remove an item from `tested`.
 
 ### How an item counts as executed
 

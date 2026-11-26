@@ -37,22 +37,37 @@ pub fn reach(surface: &Surface, root: &Path, regions: &Regions) -> BTreeSet<Stri
         .collect()
 }
 
-/// The regions the package's tests execute. Doc tests are not instrumented.
-pub fn tests(pkg: &str, features: Option<&str>) -> Result<Regions, String> {
+/// The workspace members besides `pkg` that define items `surface` counts:
+/// the ones `pkg` re-exports, whose own tests run them.
+pub fn defining_members(surface: &Surface, root: &Path, pkg: &str) -> Result<Vec<String>, String> {
+    let members = crate::workspace::member_dirs(None).map_err(|e| e.to_string())?;
+    let declared = regions::declared(surface);
+    Ok(regions::foreign_members(&declared, root, pkg, &members)
+        .into_iter()
+        .collect())
+}
+
+/// The regions the package's tests, and those of the workspace `members` it
+/// re-exports from, execute. Doc tests are not instrumented.
+pub fn tests(pkg: &str, features: Option<&str>, members: &[String]) -> Result<Regions, String> {
     let tools = tools::locate()?;
-    let build = instrument::Instrumented::new(pkg, features, tools::host_triple()?)?;
+    let build =
+        instrument::Instrumented::new(pkg, features, tools::host_triple()?)?.with_members(members);
     let executables = instrument::build_tests(&build)?;
     if executables.is_empty() {
         return Ok(Regions::default());
     }
-    cache::through(&tests_scope(pkg, features), pkg, &executables, || {
-        run_and_export(&tools, &executables, "tests", build.tests(false), false)
-    })
+    cache::through(
+        &tests_scope(pkg, features, members),
+        pkg,
+        &executables,
+        || run_and_export(&tools, &executables, "tests", build.tests(false), false),
+    )
 }
 
 /// The stored [`tests`] run for the tree as it is now, if any.
-pub fn cached_tests(pkg: &str, features: Option<&str>) -> Option<Cached> {
-    cache::lookup(&tests_scope(pkg, features), pkg)
+pub fn cached_tests(pkg: &str, features: Option<&str>, members: &[String]) -> Option<Cached> {
+    cache::lookup(&tests_scope(pkg, features, members), pkg)
 }
 
 /// The stored [`benches`] run for the tree as it is now, if any.
@@ -62,8 +77,12 @@ pub fn cached_benches(common: &CommonArgs) -> Option<Cached> {
     cache::lookup(&benches_scope(pkg, target, common.features.as_deref()), pkg)
 }
 
-fn tests_scope(pkg: &str, features: Option<&str>) -> String {
-    format!("tests {pkg} {}", features.unwrap_or_default())
+fn tests_scope(pkg: &str, features: Option<&str>, members: &[String]) -> String {
+    format!(
+        "tests {pkg} {} {}",
+        features.unwrap_or_default(),
+        members.join(",")
+    )
 }
 
 fn benches_scope(pkg: &str, target: &str, features: Option<&str>) -> String {

@@ -13,7 +13,7 @@ use crate::workspace;
 
 /// Whether an executed run may happen while building a report.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Want {
+pub(crate) enum Want {
     Run,
     Stored,
     Skip,
@@ -21,7 +21,7 @@ pub(super) enum Want {
 
 /// What each executed column may do while building a report.
 #[derive(Clone, Copy)]
-pub(super) struct Wants {
+pub(crate) struct Wants {
     pub tests: Want,
     pub benches: Want,
 }
@@ -58,29 +58,35 @@ impl Provenance {
 
 /// The executed columns of one package: the items they can tell, the ones
 /// each run reached, and where each run came from.
-pub(super) struct Columns {
+pub(crate) struct Columns {
     package: String,
-    declared: BTreeSet<String>,
-    tested: Option<BTreeSet<String>>,
-    measured: Option<BTreeSet<String>>,
+    pub declared: BTreeSet<String>,
+    pub tested: Option<BTreeSet<String>>,
+    pub measured: Option<BTreeSet<String>>,
     provenance: Provenance,
 }
 
 type Column = (Option<Regions>, Origin);
 
-/// The executed columns of `pkg`. `bench` names its bench target and features.
-pub(super) fn gather(
+/// The executed columns of `pkg`, for `coverage report` and `coverage
+/// executed` alike. Tests build with `features`, the ones the
+/// surface was read under; `bench` names the bench target and its features.
+pub(crate) fn gather(
     pkg: &str,
     surf: &Surface,
     root: &Path,
+    features: Option<&str>,
     bench: &CommonArgs,
     wants: Wants,
 ) -> Result<Columns, String> {
-    let features = bench.features.as_deref();
+    let members = match wants.tests {
+        Want::Skip => Vec::new(),
+        _ => coverage_executed::defining_members(surf, root, pkg)?,
+    };
     let tests = column(
         wants.tests,
-        || coverage_executed::cached_tests(pkg, features),
-        || coverage_executed::tests(pkg, features),
+        || coverage_executed::cached_tests(pkg, features, &members),
+        || coverage_executed::tests(pkg, features, &members),
     )?;
     let target = bench.target.as_deref().unwrap_or("soothfast");
     let benches = if workspace::has_bench_target(pkg, target, None).map_err(|e| e.to_string())? {
@@ -239,6 +245,52 @@ mod tests {
             executed,
             ..Row::default()
         }
+    }
+
+    #[test]
+    fn the_report_judges_the_items_the_standalone_run_lists() {
+        let mut surf = Surface::default();
+        let spans = vec![soothfast_docs::surface::Span {
+            file: "src/lib.rs".into(),
+            begin: 1,
+            end: 2,
+        }];
+        for (path, kind) in [
+            ("d::f", "function"),
+            ("d::C", "constant"),
+            ("d::M", "module"),
+        ] {
+            surf.items.insert(
+                path.into(),
+                soothfast_docs::surface::ItemInfo {
+                    kind: kind.into(),
+                    fingerprint: 1 + path.len() as u64,
+                    signature: String::new(),
+                    has_docs: false,
+                    example: false,
+                    spans: spans.clone(),
+                },
+            );
+        }
+        let columns = Columns {
+            package: "d".into(),
+            declared: coverage_executed::declared_paths(&surf),
+            tested: Some(BTreeSet::new()),
+            measured: None,
+            provenance: Provenance::default(),
+        };
+        let rows: Vec<Row> = surf
+            .counted()
+            .iter()
+            .map(|c| row(&c.path, Provenance::default()))
+            .collect();
+        let judged: BTreeSet<_> = attach(rows, &columns)
+            .into_iter()
+            .filter(|r| r.tested.is_some())
+            .map(|r| r.path)
+            .collect();
+        assert_eq!(judged, columns.declared);
+        assert_eq!(judged, BTreeSet::from(["d::f".to_string()]));
     }
 
     #[test]
