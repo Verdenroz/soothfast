@@ -355,15 +355,18 @@ whole repository. A markdown file the build included (`include_str!` on a
 README, say) is in the manifest and counts. The stable half of the key works
 as it does for rustdoc JSON.
 
-**The key does not name the checkout path or the target directory**, so an
-executable built for a commit at the repository root also serves the
-merge-base worktree of that commit, which the gate and `prebuild` build under
-`.soothfast/worktrees`. `CARGO_HOME` is in the key. A stored binary carries
-the paths of the tree that built it (`env!("CARGO_MANIFEST_DIR")`, `file!()`,
-`OUT_DIR` and debug info), and a run from another tree sees those. Callgrind
-counts do not depend on them unless the bench reads such a string while
-measured, and runners use one path per repository, so head and a reused
-merge-base build agree on it.
+**The key does not name the checkout path or the target directory.** It names
+the tree's content, `CARGO_HOME` and the toolchain, so an executable built for
+a commit at the repository root can also serve the merge-base worktree of that
+commit, which the gate and `prebuild` build under `.soothfast/worktrees`.
+
+A binary can carry the path it was built at: `env!("CARGO_MANIFEST_DIR")`,
+`file!()`, `OUT_DIR` and debug info write absolute paths into its bytes, and a
+bench that opens files through such a path reads the tree at that path, which
+during a pull request gate holds HEAD's sources. Each entry therefore records
+the root it was built at and whether its bytes contain it. An entry that does
+is reused only at that root, so a cache restored from another machine's path
+misses. One that does not serves any root.
 
 Each entry also keeps the digest of its binary and its link map, written
 once the first run has worked them out. A hit reads the digest instead of
@@ -372,11 +375,11 @@ pruned. A map found nowhere is made by linking the bench target again, which
 on a cold target directory means a full build, once: the map is then kept in
 the entry for the runs after it.
 
-The store holds one executable per checkout, target directory, package, bench
-target, features and profile: a newer one replaces the older, so a saved
-cache is the binary the branch runs and not its history. `cache merge` keeps the newest
-of each group by the time it was made, and pruning by size removes whole
-entries, oldest payload first.
+The store keeps the two newest executables per package, bench target, features
+and profile, which are HEAD's and the merge-base's: a saved cache is the
+binaries the branch runs and not its history. `cache merge` keeps the newest
+two of each group by the time they were made, and pruning by size removes
+whole entries, oldest payload first.
 
 ### Cache budget
 

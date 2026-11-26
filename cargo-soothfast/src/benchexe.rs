@@ -55,7 +55,6 @@ struct Plan {
     codegen_units: Option<String>,
     toolchain: Option<String>,
     rustc: String,
-    target_dir: PathBuf,
     cargo_home: String,
     env: Vec<(String, String)>,
 }
@@ -104,10 +103,6 @@ impl Plan {
                 .codegen_units_env()
                 .filter(|_| !id.discover)
                 .map(str::to_string),
-            target_dir: match &id.target_dir {
-                Some(t) => t.clone(),
-                None => invoke::target_dir(dir).ok()?,
-            },
             rustc: store::rustc_version(toolchain.as_deref(), &root)?,
             id,
             key: String::new(),
@@ -144,14 +139,12 @@ impl Plan {
         binstore::load(&self.store, &self.key, &self.root)
     }
 
-    /// What one stored executable stands for: a package's bench target built
-    /// under one profile, in one checkout and target directory.
+    /// What stored executables stand for: a package's bench target built
+    /// under one profile.
     fn group(&self) -> String {
         let profile = if self.id.discover { "dev" } else { "bench" };
         format!(
-            "{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{profile}",
-            self.root.display(),
-            self.target_dir.display(),
+            "{}\u{1}{}\u{1}{}\u{1}{profile}",
             self.id.pkg,
             self.id.target,
             self.id.features.as_deref().unwrap_or(""),
@@ -526,7 +519,6 @@ mod tests {
             codegen_units: Some("1".into()),
             toolchain: None,
             rustc: "rustc 1.99.0".into(),
-            target_dir: repo.0.join("target"),
             cargo_home: "/home/x/.cargo".into(),
             env: Vec::new(),
         };
@@ -737,14 +729,14 @@ mod tests {
     }
 
     #[test]
-    fn the_head_and_a_worktree_build_keep_an_entry_each() {
+    fn the_head_and_a_worktree_build_of_a_group_keep_an_entry_each() {
         let head = Repo::new("exe-head");
         let base = Repo::new("exe-base");
         let store = head.store_dir();
         let (head_plan, base_plan) = (plan(&head, store.clone()), plan(&base, store));
         let (head_exe, _) = resolve_counting(&head_plan, &head, b"head");
         let (base_exe, _) = resolve_counting(&base_plan, &base, b"base");
-        assert_ne!(head_plan.group(), base_plan.group());
+        assert_eq!(head_plan.group(), base_plan.group());
         for (p, r) in [(&head_plan, &head), (&base_plan, &base)] {
             let (_, builds) = resolve_counting(p, r, b"never built");
             assert_eq!(builds, 0);

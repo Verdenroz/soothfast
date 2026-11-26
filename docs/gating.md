@@ -216,8 +216,9 @@ The merge-base's bench executable is not rebuilt when the
 [executable store](ci.md#bench-executable-cache) holds one for that
 commit. Its key names the tree's content and toolchain, not the checkout
 path, so the executable the default branch built at the repository root also
-serves the merge-base worktree. `prebuild` builds the merge-base side only
-when neither the store nor the run cache has it.
+serves the merge-base worktree, unless the executable embeds the path it was
+built at, in which case it serves only that path. `prebuild` builds the
+merge-base side only when neither the store nor the run cache has it.
 
 Set `cache: "false"` to manage the cache yourself. Keep the key unique per
 commit with a prefix in `restore-keys`: an exact key is never rewritten once
