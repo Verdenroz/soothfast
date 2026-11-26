@@ -358,7 +358,8 @@ struct Together<'a> {
 
 /// Run every selected binary in one `cargo test` that matches the build, the
 /// shim skipping those with a stored pass. Doc tests run in the same
-/// invocation unless `--no-doc` has the rustdoc wrapper skip them.
+/// invocation unless the rustdoc wrapper skips them under `--no-doc` or a
+/// stored pass.
 fn run_together(
     args: &TestArgs,
     tests: &[TestBin],

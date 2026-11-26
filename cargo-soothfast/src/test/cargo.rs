@@ -113,7 +113,7 @@ pub struct RunStep<'a> {
     pub plan: &'a Path,
     /// The shim cargo calls as runner.
     pub shim: &'a Path,
-    /// The rustdoc wrapper, under `--no-doc`.
+    /// The rustdoc wrapper, under `--no-doc` or a stored doc-test pass.
     pub rustdoc: Option<&'a Path>,
 }
 

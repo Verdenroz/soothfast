@@ -28,7 +28,7 @@ pub struct Plan {
     pub runner: Vec<String>,
     /// Keyed executables, by the path cargo reported for them.
     pub entries: BTreeMap<PathBuf, Entry>,
-    /// Set under `--no-doc`: whose doc tests the rustdoc wrapper skips.
+    /// Set when some doc tests are skipped, under `--no-doc` or a stored pass.
     pub doc_skip: Option<DocSkip>,
 }
 
@@ -39,8 +39,9 @@ pub struct Entry {
     pub cached: bool,
 }
 
-/// The doc tests `--no-doc` skips: the selected packages' library crates,
-/// built from sources under the workspace root.
+/// The doc tests skipped, under `--no-doc` or a stored pass: the library
+/// crates of the packages concerned, built from sources under the workspace
+/// root.
 #[derive(Debug, PartialEq)]
 pub struct DocSkip {
     /// `RUSTDOC` before the run step replaced it.

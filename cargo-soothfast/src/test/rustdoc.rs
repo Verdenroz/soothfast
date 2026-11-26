@@ -1,4 +1,4 @@
-//! The `RUSTDOC` wrapper `--no-doc` installs for the run step.
+//! The `RUSTDOC` wrapper the run step installs to skip doc tests.
 //!
 //! Selecting targets cannot drop doc tests without also dropping units the
 //! build made, so the run step keeps the build's selection and the wrapper
@@ -46,7 +46,7 @@ pub fn run(argv0: &str, args: &[String]) -> i32 {
     let skip = plan.as_ref().and_then(|p| p.doc_skip.as_ref());
     let cwd = std::env::current_dir().unwrap_or_default();
     if let Some(name) = skip.and_then(|s| skipped(s, args, &cwd)) {
-        eprintln!("test: skip doc tests for {name} (--no-doc)");
+        eprintln!("test: skip doc tests for {name}");
         return 0;
     }
     let real = skip
