@@ -157,16 +157,24 @@ prints one row per item and a summary per dimension:
 | `documented` | its doc comment has text |
 | `documented+` | it is documented and its docs hold a fenced Rust example, or a `soothfast:bind` or `soothfast:claim` marker in the repo's tracked markdown names its path or a re-export of it; a claim names a bench, so it counts through that bench's `covers` (or the bench's own id), and only in a package with a bench target |
 | `measured (declared)` | a bench's `covers` names it, or the bench is the item; callables only, other items show `n/a` |
+| `gated` | a bench in the gate's feature set declares it, through its `covers` or as the bench itself; callables only, other items show `n/a` |
 
 A fence counts as an example unless it names another language: no language,
 `rust` and rustdoc attributes such as `no_run`, `ignore` and `compile_fail`
 all count. `measured (declared)` reads what the benches declare; it does not
-check that the bench runs the item. A `covers` that names no public item of
+check that the bench runs the item.
+
+`gated` reads the registry under the gate's features (`[gate] features`, or
+`[package.NAME.gate]`), not the report's. Where they differ, the report builds
+the package's bench a second time to list that registry. An item is gated when
+a bench the gate runs declares it. Claims sharpen what the gate checks but do
+not widen what it measures, so they add nothing here.
+A `covers` that names no public item of
 the package prints `warning: bench ID covers PATH, which is not a public item
 of PKG` on stderr, from `coverage report` and `coverage measure` alike.
 
 With `--json`, stdout is one object, `items` holding `path`, `kind`,
-`documented`, `documented_strict` and `measured_declared` per item, and
+`documented`, `documented_strict`, `measured_declared` and `gated` per item, and
 `summary` holding `covered`, `total` and `pct` per dimension. A dimension a
 tree cannot tell, such as `documented+` for a non-Rust tree, is `null`, and
 the text report shows `n/a`.
