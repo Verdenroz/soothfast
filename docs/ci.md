@@ -858,11 +858,12 @@ A cache or artifact is named for its job, so the first run of a regrouped job
 starts from the cache of its first package's earlier job where there is one.
 
 The build, test and check jobs restore the cargo cache on every run and save
-it only on a push to the default branch, and only when the target holds build
-output. A job whose stores all hit compiles nothing, and an empty target
-saved under a key that is never saved again would leave later runs to compile
-cold. Pull requests save nothing, so they do not spend the repository's cache
-budget.
+it only on a push to the default branch, so pull requests do not spend the
+repository's cache budget. A job whose stores all hit compiles nothing, and
+an empty target saved under a key that is never saved again would leave later
+runs to compile cold. When a build or check job of a push finds its target
+empty, it clears the stores and runs once more, so the entry it saves holds a
+real target. That costs time once per cache key.
 
 A finding of `ci spec` (`spec gate` found a consumer-breaking change, or
 `spec check` found a spec that no longer matches its routes) is advisory:

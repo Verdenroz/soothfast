@@ -267,7 +267,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: bench
-          save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && env.SOOTHFAST_NO_TARGET != '1' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - id: soothfast
         uses: ./.soothfast-action/action/install
       - id: prebuild
@@ -281,9 +281,23 @@ jobs:
           prebuild-shards: ${{ github.event_name == 'pull_request' && inputs.shard || 1 }}
           prebuild-stage: ${{ runner.temp }}/store
           bin-cache: "true"
-      - name: Note an empty target
-        if: always()
-        run: ./.soothfast-action/action/mark-empty-target.sh
+      - id: target
+        name: Check the target is not empty
+        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        run: ./.soothfast-action/action/clear-stores-if-no-target.sh
+      - name: Build again with the stores cleared
+        if: steps.target.outputs.empty == 'true'
+        continue-on-error: true
+        uses: ./.soothfast-action
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: "false"
+          labels: "false"
+          prebuild: bench
+          prebuild-shards: ${{ github.event_name == 'pull_request' && inputs.shard || 1 }}
+          prebuild-stage: ${{ runner.temp }}/store
+          bin-cache: "true"
       # After a failed build too: the gate then compiles for itself and reports the error.
       - name: Gate
         if: ${{ !cancelled() && env.GATES_HERE == 'true' }}
@@ -378,7 +392,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: rustdoc
-          save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && env.SOOTHFAST_NO_TARGET != '1' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - id: soothfast
         uses: ./.soothfast-action/action/install
       - uses: ./.soothfast-action
@@ -393,9 +407,25 @@ jobs:
           prebuild-docs: ${{ needs.plan.outputs.docs_package }}
           prebuild-stage: ${{ runner.temp }}/store
           rustdoc-cache: "true"
-      - name: Note an empty target
-        if: always()
-        run: ./.soothfast-action/action/mark-empty-target.sh
+      - id: target
+        name: Check the target is not empty
+        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        run: ./.soothfast-action/action/clear-stores-if-no-target.sh
+      - name: Build again with the stores cleared
+        if: steps.target.outputs.empty == 'true'
+        continue-on-error: true
+        uses: ./.soothfast-action
+        env:
+          SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: "false"
+          labels: "false"
+          prebuild: rustdoc
+          prebuild-docs: ${{ needs.plan.outputs.docs_package }}
+          prebuild-stage: ${{ runner.temp }}/store
+          rustdoc-cache: "true"
       - name: Pack the stores
         if: always()
         run: if [ -d "$RUNNER_TEMP/store" ]; then tar -C "$RUNNER_TEMP/store" -cf "$RUNNER_TEMP/store.tar" .; fi
@@ -439,16 +469,13 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && env.SOOTHFAST_NO_TARGET != '1' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - uses: ./.soothfast-action/action/install
       - name: Test
         env:
           # Word-split on purpose: empty, or the flag.
           ALL: ${{ needs.plan.outputs.test_all == 'true' && '--all' || '' }}
         run: cargo soothfast ci test $ALL
-      - name: Note an empty target
-        if: always()
-        run: ./.soothfast-action/action/mark-empty-target.sh
       - name: Upload the test result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
