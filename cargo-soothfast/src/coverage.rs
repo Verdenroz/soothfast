@@ -44,9 +44,16 @@ fn measure(args: &[String]) -> i32 {
         eprintln!("soothfast: coverage measure requires -p PKG");
         return 2;
     };
-    if let Err(e) = config::apply(&mut common, Group::Docs) {
-        eprintln!("soothfast: {e}");
-        return 2;
+    match config::apply(&mut common, Group::Docs) {
+        Ok(applied) => {
+            if common.features.is_none() {
+                common.features = applied.gate.features;
+            }
+        }
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
     }
 
     // What is measured: registry list, attributing `covers` where set.
@@ -121,7 +128,7 @@ fn docs(args: &[String]) -> i32 {
             }
         }
     }
-    let (features, min) = match config::defaults(&pkgs, Group::Docs) {
+    let (features, min) = match config::coverage_defaults(&pkgs) {
         Ok(defaults) => (features.or(defaults.features), min.or(defaults.coverage)),
         Err(e) => {
             eprintln!("soothfast: {e}");

@@ -711,8 +711,8 @@ runner has updated. A key a group's
 commands have no flag for is an error naming its line.
 
 From highest precedence: the command-line flag, `[package.NAME.GROUP]`,
-`[package.NAME]`, the repo-wide section (`[gate] features` for the `gate`, `spec` and `docs`
-groups, `[docs] paths`, `[docs] coverage`),
+`[package.NAME]`, the repo-wide section (`[gate] features`, `[docs] paths`,
+`[docs] coverage`),
 then the built-in default. A file with no `[package.*]` table behaves as
 before. The package is the command's `-p` (`docs` also takes `[docs]
 package`); a command with none reads only the repo-wide section. Given

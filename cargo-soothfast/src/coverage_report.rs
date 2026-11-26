@@ -83,7 +83,7 @@ fn rows(
     lang: Option<&str>,
     features: Option<String>,
 ) -> Result<Vec<Row>, Failure> {
-    let defaults = config::defaults(pkgs, Group::Docs).map_err(|e| (2, e))?;
+    let defaults = config::coverage_defaults(pkgs).map_err(|e| (2, e))?;
     let features = features.or(defaults.features);
     let targets = coverage::lang_targets(pkgs, dirs, lang).map_err(|e| (2, e))?;
     let mut rows = Vec::new();
