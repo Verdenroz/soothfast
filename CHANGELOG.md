@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Credit coverage to measured regions, doc-test execution, unused fixtures (#511)
 - Gate and measure usability fixes (#509)
 - Measure pub(crate) code with in-crate benches (#513)
 - Fold every coverage dimension into coverage report (#517)
@@ -56,6 +57,8 @@ CHANGED  soothfast_measure::runner::main (body)
 ADDED    soothfast_docs::claims::HEADROOM_FACTOR
 ADDED    soothfast_docs::claims::contradicts
 ADDED    soothfast_docs::claims::loose_by
+ADDED    soothfast_docs::gentests::PageCounts
+ADDED    soothfast_docs::gentests::page_counts
 ADDED    soothfast_docs::surface::Counted
 ADDED    soothfast_docs::surface::Span
 ADDED    soothfast_docs::surface::Surface::counted
