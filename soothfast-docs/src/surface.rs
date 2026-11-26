@@ -32,6 +32,20 @@ pub struct ItemInfo {
     pub signature: String,
     /// Whether the item carries a `///` doc comment.
     pub has_docs: bool,
+    /// The source ranges whose execution counts as running the item: its own
+    /// span, plus for a struct, enum, union or trait the spans of the methods
+    /// of every impl block for it, trait impls included.
+    pub spans: Vec<Span>,
+}
+
+/// A range of whole lines in a file, relative to the directory rustdoc ran in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Span {
+    pub file: String,
+    /// First line, 1-based.
+    pub begin: u32,
+    /// Last line, inclusive.
+    pub end: u32,
 }
 
 /// Public items keyed by full path (`crate::module::item`).
@@ -134,6 +148,7 @@ pub fn from_rustdoc_with(
         return surface;
     };
     let mut file_cache: HashMap<String, Vec<String>> = HashMap::new();
+    let impl_spans = impl_method_spans(index);
 
     for (id, item) in index {
         if item["visibility"] != "public" {
@@ -157,6 +172,7 @@ pub fn from_rustdoc_with(
             item_fingerprint(index, item, kind, source_root, &mut file_cache)
                 .unwrap_or((0, String::new()));
         let has_docs = item["docs"].as_str().is_some_and(|d| !d.trim().is_empty());
+        let spans = item_spans(item, id, kind, &impl_spans);
 
         surface.items.insert(
             full,
@@ -165,6 +181,7 @@ pub fn from_rustdoc_with(
                 fingerprint,
                 signature,
                 has_docs,
+                spans,
             },
         );
     }
@@ -178,6 +195,55 @@ pub fn from_rustdoc_with(
     alias_reexports(&links, &mut surface);
     index_members(index, paths, source_root, &mut file_cache, &mut surface);
     surface
+}
+
+fn span_of(item: &Value) -> Option<Span> {
+    let span = &item["span"];
+    Some(Span {
+        file: span["filename"].as_str()?.to_string(),
+        begin: u32::try_from(span["begin"][0].as_u64()?).ok()?,
+        end: u32::try_from(span["end"][0].as_u64()?).ok()?,
+    })
+}
+
+/// Kinds that run through the methods of their impl blocks.
+const IMPLEMENTED_KINDS: [&str; 4] = ["struct", "enum", "union", "trait"];
+
+fn item_spans(
+    item: &Value,
+    id: &str,
+    kind: &str,
+    impl_spans: &HashMap<String, Vec<Span>>,
+) -> Vec<Span> {
+    let mut spans: Vec<Span> = span_of(item).into_iter().collect();
+    if IMPLEMENTED_KINDS.contains(&kind) {
+        spans.extend(impl_spans.get(id).into_iter().flatten().cloned());
+    }
+    spans
+}
+
+/// The spans of the methods in every impl block, by id of the type the block
+/// is for. Blanket impls have no resolved type and register nothing.
+fn impl_method_spans(index: &serde_json::Map<String, Value>) -> HashMap<String, Vec<Span>> {
+    let mut by_type: HashMap<String, Vec<Span>> = HashMap::new();
+    for item in index.values() {
+        let imp = &item["inner"]["impl"];
+        let Some(type_id) = imp["for"]["resolved_path"]["id"].as_u64() else {
+            continue;
+        };
+        let methods = imp["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|id| index.get(&id.as_u64()?.to_string()))
+            .filter(|member| member["inner"]["function"].is_object())
+            .filter_map(span_of);
+        by_type
+            .entry(type_id.to_string())
+            .or_default()
+            .extend(methods);
+    }
+    by_type
 }
 
 /// The rustdoc name of every other crate a `pub use` in `doc` re-exports an
@@ -253,6 +319,7 @@ fn index_members(
                 has_docs: member["docs"]
                     .as_str()
                     .is_some_and(|d| !d.trim().is_empty()),
+                spans: span_of(member).into_iter().collect(),
             };
             for spelling in &spellings {
                 surface
@@ -770,6 +837,7 @@ mod tests {
             fingerprint,
             signature: String::new(),
             has_docs: false,
+            spans: Vec::new(),
         }
     }
 
@@ -1121,5 +1189,70 @@ mod tests {
             "pub struct S {\n    /// total\n    a: u8,\n}\n",
         );
         assert_ne!(before.0, after.0);
+    }
+
+    fn span(file: &str, begin: u32, end: u32) -> Span {
+        Span {
+            file: file.into(),
+            begin,
+            end,
+        }
+    }
+
+    fn spans_doc() -> Value {
+        let at = |begin: u32, end: u32| json!({ "filename": "src/lib.rs", "begin": [begin, 0], "end": [end, 1] });
+        let method = |name: &str, begin: u32, end: u32| {
+            json!({
+                "name": name,
+                "visibility": "public",
+                "inner": { "function": {} },
+                "span": at(begin, end),
+            })
+        };
+        json!({
+            "index": {
+                "1": { "name": "run", "visibility": "public", "inner": { "function": {} }, "span": at(1, 3) },
+                "2": { "name": "Meter", "visibility": "public", "inner": { "struct": {} }, "span": at(5, 5) },
+                "3": { "inner": { "impl": { "for": { "resolved_path": { "id": 2 } }, "items": [4] } } },
+                "4": method("read", 8, 10),
+                "5": { "inner": { "impl": { "trait": { "id": 9 }, "for": { "resolved_path": { "id": 2 } }, "items": [6] } } },
+                "6": method("fmt", 14, 16),
+                "7": { "inner": { "impl": { "for": { "generic": "T" }, "items": [8] } } },
+                "8": method("blanket", 20, 22),
+            },
+            "paths": {
+                "1": { "path": ["demo", "run"], "kind": "function" },
+                "2": { "path": ["demo", "Meter"], "kind": "struct" },
+            },
+        })
+    }
+
+    #[test]
+    fn a_function_carries_its_own_span() {
+        let surface = from_rustdoc(&spans_doc(), Path::new("/nowhere"));
+        assert_eq!(surface.items["demo::run"].spans, [span("src/lib.rs", 1, 3)]);
+    }
+
+    #[test]
+    fn a_struct_carries_the_spans_of_its_inherent_and_trait_methods() {
+        let surface = from_rustdoc(&spans_doc(), Path::new("/nowhere"));
+        let spans = &surface.items["demo::Meter"].spans;
+        assert_eq!(
+            spans,
+            &[
+                span("src/lib.rs", 5, 5),
+                span("src/lib.rs", 8, 10),
+                span("src/lib.rs", 14, 16),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_inherent_member_carries_its_own_span() {
+        let surface = from_rustdoc(&spans_doc(), Path::new("/nowhere"));
+        assert_eq!(
+            surface.members["demo::Meter::read"].spans,
+            [span("src/lib.rs", 8, 10)]
+        );
     }
 }

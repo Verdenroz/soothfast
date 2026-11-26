@@ -77,6 +77,7 @@ fn surface(entries: &[Entry]) -> Surface {
                 fingerprint: 0,
                 signature: String::new(),
                 has_docs: e.documented,
+                spans: Vec::new(),
             },
         );
     }
