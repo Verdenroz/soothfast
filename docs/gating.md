@@ -694,7 +694,7 @@ paths = ["README.md", "docs/server"]
 | Group | Commands | Keys |
 | --- | --- | --- |
 | `gate` | `gate`, `measure`, `baseline`, `prebuild`, `trend append`, `buildcost` | `features`, `target`, `baseline`, `cpu` |
-| `docs` | `docs *`, `coverage`, `report`, `mcp` | `features`, `target`, `baseline`, `paths`, `coverage` |
+| `docs` | `docs *`, `coverage`, `report`, `mcp` | `features`, `target`, `baseline`, `paths`, `coverage`, `coverage_min.DIMENSION` |
 | `spec` | `spec *`, `sdk *` | `features`, `target` |
 | `test` | `test` | `features` |
 
@@ -710,9 +710,29 @@ rejects `coverage` as an unknown key of `[docs]`, so adopt it once every
 runner has updated. A key a group's
 commands have no flag for is an error naming its line.
 
+`coverage_min.DIMENSION` is the same percent for one dimension of `coverage
+report`: `documented`, `documented_strict`, `measured_declared`, and the
+names `gated`, `tested`, `measured` and `specified`, which parse now and take
+effect once a command computes them. `ci coverage` fails a package that falls
+short of any minimum set, and reports every dimension that has none.
+`coverage` is `coverage_min.documented`; setting both to different values in
+one table is an error naming both lines. The keys are dotted keys of `[docs]`
+and `[package.NAME.docs]`, and `[package.NAME.docs]` overrides the repo-wide
+value one dimension at a time. A dimension name that does not exist is an
+error naming its line.
+
+```toml
+[docs]
+coverage = 90
+coverage_min.documented_strict = 50
+
+[package.server.docs]
+coverage_min.measured_declared = 25
+```
+
 From highest precedence: the command-line flag, `[package.NAME.GROUP]`,
 `[package.NAME]`, the repo-wide section (`[gate] features`, `[docs] paths`,
-`[docs] coverage`),
+`[docs] coverage` and `[docs] coverage_min.*`),
 then the built-in default. A file with no `[package.*]` table behaves as
 before. The package is the command's `-p` (`docs` also takes `[docs]
 package`); a command with none reads only the repo-wide section. Given

@@ -51,6 +51,14 @@ report: wrote docs/perf/badges/gate.json
 the baseline. `badges/gate.json` reads `.soothfast/gate-status.json`, written
 by the last `gate` run, through `badges::gate_badge`.
 
+With `-p` packages, it also writes `badges/coverage.json` and `.svg` from
+`coverage report`: the mean of the percentages of the dimensions that apply,
+floored. A `badges/coverage-DIMENSION.json` and `.svg` beside it carries each
+dimension's own percent (`documented`, `documented_strict`,
+`measured_declared`), so a composite cannot hide one dimension behind the
+others; a dimension no package can tell reads `n/a` in grey. When the
+coverage cannot be computed, the render warns and writes the rest.
+
 The trend SVGs (`trend-instructions.svg`, `trend-walltime_median_ns.svg`,
 `trend-allocs.svg`) only appear once `.soothfast/trend.jsonl` holds at least
 two points for that metric. Below that `trend_chart::render` returns `None`
