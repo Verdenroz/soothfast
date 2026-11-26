@@ -11,15 +11,17 @@ use soothfast_docs::surface::Surface;
 
 use crate::config::{self, Group};
 use crate::coverage_lang::{self, Target};
+use crate::coverage_report;
 use crate::invoke::{self, CommonArgs};
 
 pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("measure") => measure(&args[1..]),
         Some("docs") => docs(&args[1..]),
+        Some("report") => coverage_report::run(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast coverage measure|docs -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]"
+                "soothfast: usage: cargo soothfast coverage measure|docs -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]\n       coverage report -p PKG [-p PKG ...] [--features F] [--json]\n       coverage report --dir D --lang L [--json]"
             );
             2
         }
@@ -55,15 +57,7 @@ fn measure(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let covered: BTreeSet<String> = records
-        .iter()
-        .filter(|r| r["type"] == "item")
-        .filter_map(|r| {
-            let covers = r["covers"].as_str().unwrap_or("");
-            let id = r["id"].as_str()?;
-            Some(if covers.is_empty() { id } else { covers }.to_string())
-        })
-        .collect();
+    let covered = declared_covers(&records);
 
     let surf = match load_surface(&pkg, common.features.as_deref()) {
         Ok(s) => s,
@@ -200,6 +194,20 @@ fn docs(args: &[String]) -> i32 {
     0
 }
 
+/// The paths the registry's items declare they measure: their `covers`, or
+/// their own id where it is empty.
+pub(crate) fn declared_covers(records: &[Value]) -> BTreeSet<String> {
+    records
+        .iter()
+        .filter(|r| r["type"] == "item")
+        .filter_map(|r| {
+            let covers = r["covers"].as_str().unwrap_or("");
+            let id = r["id"].as_str()?;
+            Some(if covers.is_empty() { id } else { covers }.to_string())
+        })
+        .collect()
+}
+
 /// A warning per bench whose `covers` names no item or method of `surf`.
 pub(crate) fn dangling_covers(records: &[Value], surf: &Surface, pkg: &str) -> Vec<String> {
     records
@@ -215,7 +223,7 @@ pub(crate) fn dangling_covers(records: &[Value], surf: &Surface, pkg: &str) -> V
 
 /// Source trees to cover besides the `-p` crates: `--dir`/`--lang`, else the
 /// manifest's non-Rust projects when no crate was named.
-fn lang_targets(
+pub(crate) fn lang_targets(
     pkgs: &[String],
     dirs: &[String],
     lang: Option<&str>,
@@ -233,7 +241,7 @@ fn lang_targets(
     coverage_lang::targets(Path::new("."), dirs, lang)
 }
 
-fn load_surface(
+pub(crate) fn load_surface(
     pkg: &str,
     features: Option<&str>,
 ) -> Result<soothfast_docs::surface::Surface, String> {
@@ -251,7 +259,7 @@ fn report(what: &str, total: u32, missing: u32) -> u32 {
 }
 
 /// Integer floor percentage; an empty surface counts as fully covered.
-fn pct(total: u32, missing: u32) -> u32 {
+pub(crate) fn pct(total: u32, missing: u32) -> u32 {
     let covered = total.saturating_sub(missing);
     covered
         .saturating_mul(100)
