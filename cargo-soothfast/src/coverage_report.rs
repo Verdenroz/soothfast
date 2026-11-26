@@ -6,12 +6,13 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 use soothfast_docs::{claims, markdown, surface::Surface};
+use soothfast_report::badges;
 
-use crate::config::{self, Group};
+use crate::config::{self, Group, Settings};
 use crate::coverage::{self, dangling_covers, declared_covers};
 use crate::coverage_lang;
-use crate::invoke::{self, CommonArgs};
-use crate::{docs, workspace};
+use crate::invoke::{self, Build, CommonArgs};
+use crate::{benchexe, docs, workspace};
 
 /// A public item and what covers it. `None` is a dimension the item's tree
 /// has no way to tell.
@@ -22,14 +23,27 @@ struct Row {
     documented_strict: Option<bool>,
     measured_declared: Option<bool>,
     gated: Option<bool>,
+    /// The item's claims were not read: no bench executable was listed, so
+    /// `documented_strict` is a lower bound.
+    claims_unread: bool,
 }
 
-const DIMENSIONS: [(&str, &str); 4] = [
+/// Every dimension a report carries: its JSON name and its label.
+pub(crate) const DIMENSIONS: [(&str, &str); 4] = [
     ("documented", "documented"),
     ("documented_strict", "documented+"),
     ("measured_declared", "measured (declared)"),
     ("gated", "gated"),
 ];
+
+/// Dimensions other commands compute, named so a minimum for one parses
+/// before its values reach a report.
+const PENDING: [&str; 3] = ["tested", "measured", "specified"];
+
+/// Whether `name` is a dimension a minimum may be set on.
+pub(crate) fn is_dimension(name: &str) -> bool {
+    DIMENSIONS.iter().any(|(d, _)| *d == name) || PENDING.contains(&name)
+}
 
 impl Row {
     fn dimension(&self, name: &str) -> Option<bool> {
@@ -42,12 +56,17 @@ impl Row {
     }
 }
 
+/// The line `--check` ends with: a JSON array of every applicable dimension's
+/// figures, which a CI record reads back.
+pub(crate) const SUMMARY_PREFIX: &str = "soothfast-coverage ";
+
 pub fn run(args: &[String]) -> i32 {
     let mut pkgs: Vec<String> = Vec::new();
     let mut dirs: Vec<String> = Vec::new();
     let mut lang: Option<String> = None;
     let mut features: Option<String> = None;
     let mut json = false;
+    let mut check = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -56,26 +75,138 @@ pub fn run(args: &[String]) -> i32 {
             "--lang" => lang = it.next().cloned(),
             "--features" => features = it.next().cloned(),
             "--json" => json = true,
+            "--check" => check = true,
             other => {
                 eprintln!("soothfast: unknown coverage report arg {other:?}");
                 return 2;
             }
         }
     }
-    match rows(&pkgs, &dirs, lang.as_deref(), features) {
+    match rows(&pkgs, &dirs, lang.as_deref(), features, check) {
         Ok(rows) => {
             if json {
                 println!("{:#}", render_json(&rows));
+            } else if check {
+                print!("{}", render_summary(&rows));
             } else {
                 print!("{}", render_text(&rows));
             }
-            0
+            if check {
+                held_to_minimums(&rows, &pkgs)
+            } else {
+                0
+            }
         }
+        Err((_, e)) if check => could_not_run(&pkgs, &e),
         Err((code, e)) => {
             eprintln!("soothfast: {e}");
             code
         }
     }
+}
+
+/// A `--check` whose report could not be built fails only a package that sets
+/// a minimum; any other passes with a note in its output.
+fn could_not_run(pkgs: &[String], error: &str) -> i32 {
+    let settings = config::coverage_defaults(pkgs);
+    let code = unbuilt_exit(&settings);
+    if code == 0 {
+        println!("{}", skip_note(error));
+    } else {
+        eprintln!("soothfast: {error}");
+    }
+    code
+}
+
+fn unbuilt_exit(settings: &Result<Settings, String>) -> i32 {
+    match settings {
+        Ok(settings) if !settings.holds_minimum() => 0,
+        _ => 2,
+    }
+}
+
+fn skip_note(error: &str) -> String {
+    format!(
+        "coverage could not run: {}",
+        error.lines().next().unwrap_or_default()
+    )
+}
+
+/// A dimension's tally and the minimum it must reach, where one is set.
+struct Figure {
+    name: &'static str,
+    label: &'static str,
+    covered: u32,
+    total: u32,
+    min: Option<u32>,
+    partial: bool,
+}
+
+impl Figure {
+    fn pct(&self) -> u32 {
+        percent((self.covered, self.total))
+    }
+
+    fn short(&self) -> bool {
+        self.min.is_some_and(|min| self.pct() < min)
+    }
+}
+
+fn figures(rows: &[Row], minimums: &Settings) -> Vec<Figure> {
+    DIMENSIONS
+        .iter()
+        .filter_map(|&(name, label)| {
+            let (covered, total) = summarize(rows, name)?;
+            let min = minimums.minimum(name);
+            Some(Figure {
+                name,
+                label,
+                covered,
+                total,
+                min,
+                partial: partial(rows, name),
+            })
+        })
+        .collect()
+}
+
+/// Prints the unmet minimums and the summary line. Exits 1 when a minimum is
+/// not met and 2 when the configuration cannot be read.
+fn held_to_minimums(rows: &[Row], pkgs: &[String]) -> i32 {
+    let settings = match config::coverage_defaults(pkgs) {
+        Ok(settings) => settings,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    let figures = figures(rows, &settings);
+    let summary: Vec<Value> = figures
+        .iter()
+        .map(|f| {
+            json!({
+                "dimension": f.name,
+                "covered": f.covered,
+                "total": f.total,
+                "pct": f.pct(),
+                "min": f.min,
+                "partial": f.partial,
+            })
+        })
+        .collect();
+    for name in PENDING.iter().filter(|n| settings.minimum(n).is_some()) {
+        eprintln!("coverage: a minimum is set on {name}, which no command computes yet");
+    }
+    for f in figures.iter().filter(|f| f.short()) {
+        println!(
+            "coverage: {} is {}%, below the minimum {}%",
+            f.label,
+            f.pct(),
+            f.min.unwrap_or_default()
+        );
+    }
+    println!("{SUMMARY_PREFIX}{}", Value::Array(summary));
+    i32::from(figures.iter().any(Figure::short))
 }
 
 type Failure = (i32, String);
@@ -85,6 +216,7 @@ fn rows(
     dirs: &[String],
     lang: Option<&str>,
     features: Option<String>,
+    check: bool,
 ) -> Result<Vec<Row>, Failure> {
     let defaults = config::coverage_defaults(pkgs).map_err(|e| (2, e))?;
     let features = features.or(defaults.features);
@@ -99,6 +231,7 @@ fn rows(
             documented_strict: None,
             measured_declared: None,
             gated: None,
+            claims_unread: false,
         }));
     }
     if pkgs.is_empty() {
@@ -107,20 +240,37 @@ fn rows(
     let marked = marker_targets(&invoke::project_root());
     for pkg in pkgs {
         let surf = coverage::load_surface(pkg, features.as_deref()).map_err(|e| (1, e))?;
+        let may_build = !check || needs_bench(pkg).map_err(|e| (2, e))?;
         let build = bench_args(pkg, features.clone(), Group::Docs).map_err(|e| (1, e))?;
-        let records = discover(&build).map_err(|e| (1, e))?;
+        let records = discover(&build, may_build).map_err(|e| (1, e))?;
+        let Some(records) = records else {
+            eprintln!(
+                "{pkg}: no built bench executable; measured (declared) and gated are n/a and documented+ counts binds only"
+            );
+            rows.extend(rust_rows(&surf, None, &marked.items(&[]), None));
+            continue;
+        };
         for warning in dangling_covers(&records, &surf, pkg) {
             eprintln!("{warning}");
         }
-        let gate_records = gate_discovery(pkg, &build, &records).map_err(|e| (1, e))?;
+        let gate_records = gate_discovery(pkg, &build, &records, may_build).map_err(|e| (1, e))?;
         rows.extend(rust_rows(
             &surf,
-            &declared_covers(&records),
+            Some(&declared_covers(&records)),
             &marked.items(&records),
-            &declared_covers(&gate_records),
+            gate_records.as_deref().map(declared_covers).as_ref(),
         ));
     }
     Ok(rows)
+}
+
+/// Whether `pkg` has a minimum on a dimension its bench target's claims and
+/// declarations decide.
+fn needs_bench(pkg: &str) -> Result<bool, String> {
+    let minimums = config::coverage_defaults(&[pkg.to_string()])?;
+    Ok(["documented_strict", "measured_declared", "gated"]
+        .iter()
+        .any(|d| minimums.minimum(d).is_some()))
 }
 
 fn bench_args(pkg: &str, features: Option<String>, group: Group) -> Result<CommonArgs, String> {
@@ -133,15 +283,26 @@ fn bench_args(pkg: &str, features: Option<String>, group: Group) -> Result<Commo
     Ok(common)
 }
 
-/// The registry's items for the bench `common` names; none when its package
-/// has no such bench target to link them from.
-fn discover(common: &CommonArgs) -> Result<Vec<Value>, String> {
+/// The registry's items for the bench `common` names, listed by a stored bench
+/// executable of either profile when there is one, else by a dev build when
+/// `may_build`. No items when its package has no such bench target to link them
+/// from, and `None` when it has one that is not built and may not be.
+fn discover(common: &CommonArgs, may_build: bool) -> Result<Option<Vec<Value>>, String> {
     let pkg = common.pkg.as_deref().unwrap_or_default();
     let target = common.target.as_deref().unwrap_or("soothfast");
     if !workspace::has_bench_target(pkg, target, None).map_err(|e| e.to_string())? {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     }
-    invoke::run_discovery(common, &["--list"]).map_err(|e| e.to_string())
+    let listed = if benchexe::is_stored(common, None, None, Build::Discover) {
+        invoke::run_discovery(common, &["--list"])
+    } else if benchexe::is_stored(common, None, None, Build::Measure) {
+        invoke::run_bench_in(common, &["--list"], None)
+    } else if may_build {
+        invoke::run_discovery(common, &["--list"])
+    } else {
+        return Ok(None);
+    };
+    listed.map(Some).map_err(|e| e.to_string())
 }
 
 /// The registry under the gate's features. A second bench build happens only
@@ -150,23 +311,26 @@ fn gate_discovery(
     pkg: &str,
     docs: &CommonArgs,
     docs_records: &[Value],
-) -> Result<Vec<Value>, String> {
+    may_build: bool,
+) -> Result<Option<Vec<Value>>, String> {
     let features = config::defaults(&[pkg.to_string()], Group::Gate)?.features;
     let gate = bench_args(pkg, features, Group::Gate)?;
     if (&gate.features, &gate.target) == (&docs.features, &docs.target) {
-        return Ok(docs_records.to_vec());
+        return Ok(Some(docs_records.to_vec()));
     }
-    discover(&gate)
+    discover(&gate, may_build)
 }
 
-/// Every item and method of `surf`. `documented_strict` implies `documented`:
+/// Every item and method of `surf`, with `declared` the items benches cover
+/// (`None` when no bench could be listed). `documented_strict` implies `documented`:
 /// an example or a marker lifts a documented item, it does not stand in for
-/// the docs. `gated` holds the paths the gate's benches declare.
+/// the docs. `gated` holds the paths the gate's benches declare, and is
+/// `None` when they could not be listed.
 fn rust_rows(
     surf: &Surface,
-    declared: &BTreeSet<String>,
+    declared: Option<&BTreeSet<String>>,
     marked: &BTreeSet<String>,
-    gated: &BTreeSet<String>,
+    gated: Option<&BTreeSet<String>>,
 ) -> Vec<Row> {
     let named = |set: &BTreeSet<String>, aliases: &[&String]| {
         aliases.iter().any(|a| set.contains(a.as_str()))
@@ -180,8 +344,13 @@ fn rust_rows(
             documented_strict: Some(
                 c.info.has_docs && (c.info.example || named(marked, &c.aliases)),
             ),
-            measured_declared: (c.info.kind == "function").then(|| named(declared, &c.aliases)),
-            gated: (c.info.kind == "function").then(|| named(gated, &c.aliases)),
+            measured_declared: declared
+                .filter(|_| c.info.kind == "function")
+                .map(|declared| named(declared, &c.aliases)),
+            gated: gated
+                .filter(|_| c.info.kind == "function")
+                .map(|gated| named(gated, &c.aliases)),
+            claims_unread: declared.is_none(),
         })
         .collect()
 }
@@ -242,6 +411,49 @@ fn targets_in(texts: impl Iterator<Item = String>) -> Markers {
     out
 }
 
+/// Whether `name`'s figure is a lower bound: only `documented_strict` is, and
+/// only when a row's claims were not read.
+fn partial(rows: &[Row], name: &str) -> bool {
+    name == "documented_strict" && rows.iter().any(|r| r.claims_unread)
+}
+
+/// The badges for `pkgs`, by file stem: `coverage`, the mean of the percentages
+/// of the dimensions that apply, and `coverage-DIMENSION` for each, so one
+/// dimension cannot carry the composite unseen.
+pub(crate) fn badge_files(
+    pkgs: &[String],
+    features: Option<&str>,
+) -> Result<Vec<(String, Value)>, String> {
+    let mut rows = Vec::new();
+    for pkg in pkgs {
+        let features = features.map(str::to_string);
+        rows.extend(
+            self::rows(std::slice::from_ref(pkg), &[], None, features, false).map_err(|f| f.1)?,
+        );
+    }
+    Ok(badge_set(&rows))
+}
+
+fn badge_set(rows: &[Row]) -> Vec<(String, Value)> {
+    let pcts: Vec<Option<u32>> = DIMENSIONS
+        .iter()
+        .map(|(name, _)| summarize(rows, name).map(percent))
+        .collect();
+    let applicable: Vec<u32> = pcts.iter().flatten().copied().collect();
+    let badge = |label: &str, pct: Option<u32>| match pct {
+        Some(pct) => badges::coverage_badge(label, pct),
+        None => badges::badge(label, "n/a", "lightgrey"),
+    };
+    let composite =
+        (!applicable.is_empty()).then(|| applicable.iter().sum::<u32>() / applicable.len() as u32);
+    let mut files = vec![("coverage".to_string(), badge("coverage", composite))];
+    for ((name, label), pct) in DIMENSIONS.iter().zip(pcts) {
+        let stem = format!("coverage-{name}");
+        files.push((stem, badge(&format!("coverage {label}"), pct)));
+    }
+    files
+}
+
 /// Covered and total over the rows a dimension applies to; `None` when it
 /// applies to none.
 fn summarize(rows: &[Row], name: &str) -> Option<(u32, u32)> {
@@ -278,6 +490,13 @@ fn render_json(rows: &[Row]) -> Value {
                 Value::Null,
                 |s| json!({ "covered": s.0, "total": s.1, "pct": percent(s) }),
             );
+            let value = match value {
+                Value::Object(mut figure) if partial(rows, name) => {
+                    figure.insert("partial".into(), Value::Bool(true));
+                    Value::Object(figure)
+                }
+                other => other,
+            };
             (name.to_string(), value)
         })
         .collect();
@@ -305,9 +524,20 @@ fn render_text(rows: &[Row]) -> String {
             r.kind
         ));
     }
+    out.push_str(&render_summary(rows));
+    out
+}
+
+fn render_summary(rows: &[Row]) -> String {
+    let mut out = String::new();
     for (name, label) in DIMENSIONS {
+        let note = if partial(rows, name) {
+            ", claims not read: no bench executable"
+        } else {
+            ""
+        };
         let figure = summarize(rows, name).map_or("n/a".to_string(), |s| {
-            format!("{}/{} ({}%)", s.0, s.1, percent(s))
+            format!("{}/{} ({}%{note})", s.0, s.1, percent(s))
         });
         out.push_str(&format!("{:<20} {figure}\n", format!("{label}:")));
     }
@@ -361,7 +591,12 @@ mod tests {
 
     #[test]
     fn a_fenced_example_or_a_bind_through_an_alias_lifts_a_documented_item() {
-        let rows = rust_rows(&surface(), &set(&[]), &set(&["d::alias::bound"]), &set(&[]));
+        let rows = rust_rows(
+            &surface(),
+            Some(&set(&[])),
+            &set(&["d::alias::bound"]),
+            Some(&set(&[])),
+        );
         assert_eq!(row(&rows, "d::sorted").documented_strict, Some(true));
         assert_eq!(row(&rows, "d::bound").documented_strict, Some(true));
         assert_eq!(row(&rows, "d::bare").documented_strict, Some(false));
@@ -369,7 +604,12 @@ mod tests {
 
     #[test]
     fn a_marker_does_not_stand_in_for_the_docs() {
-        let rows = rust_rows(&surface(), &set(&[]), &set(&["d::blank"]), &set(&[]));
+        let rows = rust_rows(
+            &surface(),
+            Some(&set(&[])),
+            &set(&["d::blank"]),
+            Some(&set(&[])),
+        );
         let blank = row(&rows, "d::blank");
         assert_eq!(
             (blank.documented, blank.documented_strict),
@@ -381,9 +621,9 @@ mod tests {
     fn only_callables_are_declared_measured() {
         let rows = rust_rows(
             &surface(),
-            &set(&["d::alias::sorted", "d::Thing::go"]),
+            Some(&set(&["d::alias::sorted", "d::Thing::go"])),
             &set(&[]),
-            &set(&[]),
+            Some(&set(&[])),
         );
         assert_eq!(row(&rows, "d::sorted").measured_declared, Some(true));
         assert_eq!(row(&rows, "d::Thing::go").measured_declared, Some(true));
@@ -392,12 +632,88 @@ mod tests {
     }
 
     #[test]
+    fn without_a_listed_bench_measured_is_not_applicable() {
+        let rows = rust_rows(&surface(), None, &set(&["d::alias::bound"]), None);
+        assert!(rows.iter().all(|r| r.measured_declared.is_none()));
+        assert_eq!(row(&rows, "d::bound").documented_strict, Some(true));
+    }
+
+    #[test]
+    fn an_unread_bench_marks_documented_plus_as_a_lower_bound() {
+        let rows = rust_rows(&surface(), None, &set(&[]), None);
+        let text = render_text(&rows);
+        assert!(
+            text.contains("documented+:         1/6 (16%, claims not read: no bench executable)"),
+            "{text}"
+        );
+        let json = render_json(&rows);
+        assert_eq!(json["summary"]["documented_strict"]["partial"], true);
+        assert!(json["summary"]["documented"].get("partial").is_none());
+        let read = render_json(&rust_rows(
+            &surface(),
+            Some(&set(&[])),
+            &set(&[]),
+            Some(&set(&[])),
+        ));
+        assert!(
+            read["summary"]["documented_strict"]
+                .get("partial")
+                .is_none()
+        );
+        assert!(
+            figures(&rows, &Settings::default())
+                .iter()
+                .any(|f| f.partial)
+        );
+    }
+
+    #[test]
+    fn the_composite_badge_is_the_mean_of_the_applicable_dimensions() {
+        let rows = rust_rows(
+            &surface(),
+            Some(&set(&["d::sorted"])),
+            &set(&[]),
+            Some(&set(&[])),
+        );
+        let files = badge_set(&rows);
+        let message = |stem: &str| {
+            let (_, badge) = files.iter().find(|(s, _)| s == stem).unwrap();
+            badge["message"].as_str().unwrap().to_string()
+        };
+        assert_eq!(message("coverage-documented"), "83%");
+        assert_eq!(message("coverage-documented_strict"), "16%");
+        assert_eq!(message("coverage-measured_declared"), "20%");
+        assert_eq!(message("coverage-gated"), "0%");
+        assert_eq!(message("coverage"), "29%");
+    }
+
+    #[test]
+    fn a_dimension_no_row_can_tell_has_a_grey_badge_and_no_vote() {
+        let rows = vec![Row {
+            path: "src/a.py#f".into(),
+            kind: "function".into(),
+            documented: true,
+            documented_strict: None,
+            measured_declared: None,
+            claims_unread: false,
+            gated: None,
+        }];
+        let files = badge_set(&rows);
+        assert_eq!(files[0].1["message"], "100%");
+        let strict = files
+            .iter()
+            .find(|(s, _)| s == "coverage-documented_strict");
+        assert_eq!(strict.unwrap().1["message"], "n/a");
+        assert!(badge_set(&[]).iter().all(|(_, b)| b["message"] == "n/a"));
+    }
+
+    #[test]
     fn only_callables_a_gate_bench_covers_are_gated() {
         let rows = rust_rows(
             &surface(),
+            Some(&set(&[])),
             &set(&[]),
-            &set(&[]),
-            &set(&["d::alias::sorted", "d::Thing::go", "d::Thing"]),
+            Some(&set(&["d::alias::sorted", "d::Thing::go", "d::Thing"])),
         );
         assert_eq!(row(&rows, "d::sorted").gated, Some(true));
         assert_eq!(row(&rows, "d::Thing::go").gated, Some(true));
@@ -440,7 +756,12 @@ mod tests {
         let mut surf = Surface::default();
         surf.items
             .insert("demo::run".into(), info("function", 1, true, false));
-        let rows = rust_rows(&surf, &set(&[]), &markers.items(&records), &set(&[]));
+        let rows = rust_rows(
+            &surf,
+            Some(&set(&[])),
+            &markers.items(&records),
+            Some(&set(&[])),
+        );
         assert_eq!(row(&rows, "demo::run").documented_strict, Some(true));
     }
 
@@ -452,6 +773,7 @@ mod tests {
             documented: true,
             documented_strict: None,
             measured_declared: None,
+            claims_unread: false,
             gated: None,
         }];
         let json = render_json(&rows);
@@ -464,8 +786,84 @@ mod tests {
     }
 
     #[test]
+    fn a_figure_is_short_only_below_a_minimum_that_is_set() {
+        let rows = rust_rows(&surface(), Some(&set(&[])), &set(&[]), Some(&set(&[])));
+        let settings = |documented: Option<u32>, strict: Option<u32>| Settings {
+            coverage: documented,
+            minimums: strict
+                .map(|n| ("documented_strict".to_string(), n))
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let short = |s: Settings| {
+            figures(&rows, &s)
+                .iter()
+                .filter(|f| f.short())
+                .map(|f| f.name)
+                .collect::<Vec<_>>()
+        };
+        assert!(short(settings(None, None)).is_empty());
+        assert!(short(settings(Some(83), Some(16))).is_empty());
+        assert_eq!(short(settings(Some(84), None)), ["documented"]);
+        assert_eq!(short(settings(None, Some(17))), ["documented_strict"]);
+    }
+
+    #[test]
+    fn an_unbuilt_report_fails_only_a_package_with_a_minimum() {
+        let with = |min: Settings| unbuilt_exit(&Ok(min));
+        assert_eq!(with(Settings::default()), 0);
+        let documented = Settings {
+            coverage: Some(80),
+            ..Settings::default()
+        };
+        assert_eq!(with(documented), 2);
+        let other = Settings {
+            minimums: [("gated".to_string(), 10)].into(),
+            ..Settings::default()
+        };
+        assert_eq!(with(other), 2);
+        assert_eq!(unbuilt_exit(&Err("bad config".into())), 2);
+    }
+
+    #[test]
+    fn the_skip_note_carries_the_first_error_line() {
+        assert_eq!(
+            skip_note("rustdoc failed\n  --> src/lib.rs"),
+            "coverage could not run: rustdoc failed"
+        );
+    }
+
+    #[test]
+    fn a_dimension_that_does_not_apply_has_no_figure() {
+        let rows = vec![Row {
+            path: "src/a.py#f".into(),
+            kind: "function".into(),
+            documented: true,
+            documented_strict: None,
+            measured_declared: None,
+            claims_unread: false,
+            gated: None,
+        }];
+        let settings = Settings {
+            minimums: [("measured_declared".to_string(), 90)].into(),
+            ..Settings::default()
+        };
+        let got = figures(&rows, &settings);
+        assert_eq!(
+            got.iter().map(|f| f.name).collect::<Vec<_>>(),
+            ["documented"]
+        );
+    }
+
+    #[test]
     fn the_summary_counts_over_applicable_rows_and_floors() {
-        let rows = rust_rows(&surface(), &set(&["d::sorted"]), &set(&[]), &set(&[]));
+        let rows = rust_rows(
+            &surface(),
+            Some(&set(&["d::sorted"])),
+            &set(&[]),
+            Some(&set(&[])),
+        );
         let json = render_json(&rows);
         assert_eq!(json["summary"]["documented"]["total"], 6);
         assert_eq!(json["summary"]["documented"]["covered"], 5);

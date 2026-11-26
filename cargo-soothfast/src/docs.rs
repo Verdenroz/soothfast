@@ -1075,6 +1075,7 @@ mod tests {
             paths: Some(vec!["book".into()]),
             coverage: None,
             cpu: None,
+            minimums: Default::default(),
         };
         let mut a = DocsArgs {
             baseline: "base".into(),

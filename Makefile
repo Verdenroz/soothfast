@@ -86,9 +86,6 @@ docs-pages:
 	   echo '```text'; \
 	   for crate in $(REF_CRATES); do $(SOOTHFAST) coverage docs -p $$crate; done; \
 	   echo '```'; } > docs/coverage.md
-	@$(SOOTHFAST) coverage docs $(foreach crate,$(REF_CRATES),-p $(crate)) \
-		--badge docs/perf/badges/coverage.json \
-		--badge docs/perf/badges/coverage.svg | tail -3
 
 docs: docs-pages ## Regenerate derived pages, then serve the site locally with live reload
 	$(SOOTHFAST) docs serve --baseline self
