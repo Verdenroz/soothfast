@@ -10,8 +10,8 @@ use soothfast_docs::{claims, markdown, surface::Surface};
 use crate::config::{self, Group, Settings};
 use crate::coverage::{self, dangling_covers, declared_covers};
 use crate::coverage_lang;
-use crate::invoke::{self, CommonArgs};
-use crate::{docs, workspace};
+use crate::invoke::{self, Build, CommonArgs};
+use crate::{benchexe, docs, workspace};
 
 /// A public item and what covers it. `None` is a dimension the item's tree
 /// has no way to tell.
@@ -75,7 +75,7 @@ pub fn run(args: &[String]) -> i32 {
             }
         }
     }
-    match rows(&pkgs, &dirs, lang.as_deref(), features) {
+    match rows(&pkgs, &dirs, lang.as_deref(), features, check) {
         Ok(rows) => {
             if json {
                 println!("{:#}", render_json(&rows));
@@ -175,6 +175,7 @@ fn rows(
     dirs: &[String],
     lang: Option<&str>,
     features: Option<String>,
+    check: bool,
 ) -> Result<Vec<Row>, Failure> {
     let defaults = config::coverage_defaults(pkgs).map_err(|e| (2, e))?;
     let features = features.or(defaults.features);
@@ -196,22 +197,45 @@ fn rows(
     let marked = marker_targets(&invoke::project_root());
     for pkg in pkgs {
         let surf = coverage::load_surface(pkg, features.as_deref()).map_err(|e| (1, e))?;
-        let records = discover(pkg, features.as_deref()).map_err(|e| (1, e))?;
+        let may_build = !check || needs_bench(pkg).map_err(|e| (2, e))?;
+        let records = discover(pkg, features.as_deref(), may_build).map_err(|e| (1, e))?;
+        let Some(records) = records else {
+            eprintln!(
+                "{pkg}: no built bench executable; measured (declared) is n/a and documented+ counts binds only"
+            );
+            rows.extend(rust_rows(&surf, None, &marked.items(&[])));
+            continue;
+        };
         for warning in dangling_covers(&records, &surf, pkg) {
             eprintln!("{warning}");
         }
         rows.extend(rust_rows(
             &surf,
-            &declared_covers(&records),
+            Some(&declared_covers(&records)),
             &marked.items(&records),
         ));
     }
     Ok(rows)
 }
 
-/// The registry's items for `pkg`; none when it has no bench target to link
-/// them from.
-fn discover(pkg: &str, features: Option<&str>) -> Result<Vec<Value>, String> {
+/// Whether `pkg` has a minimum on a dimension only its built bench target can
+/// tell.
+fn needs_bench(pkg: &str) -> Result<bool, String> {
+    let minimums = config::coverage_defaults(&[pkg.to_string()])?;
+    Ok(["measured_declared", "gated"]
+        .iter()
+        .any(|d| minimums.minimum(d).is_some()))
+}
+
+/// The registry's items for `pkg`, listed by a stored bench executable of
+/// either profile when there is one, else by a dev build when `may_build`. No
+/// items when it has no bench target to link them from, and `None` when it
+/// has one that is not built and may not be.
+fn discover(
+    pkg: &str,
+    features: Option<&str>,
+    may_build: bool,
+) -> Result<Option<Vec<Value>>, String> {
     let mut common = CommonArgs {
         pkg: Some(pkg.to_string()),
         features: features.map(str::to_string),
@@ -220,15 +244,29 @@ fn discover(pkg: &str, features: Option<&str>) -> Result<Vec<Value>, String> {
     config::apply(&mut common, Group::Docs)?;
     let target = common.target.as_deref().unwrap_or("soothfast");
     if !workspace::has_bench_target(pkg, target, None).map_err(|e| e.to_string())? {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     }
-    invoke::run_discovery(&common, &["--list"]).map_err(|e| e.to_string())
+    let listed = if benchexe::is_stored(&common, None, None, Build::Discover) {
+        invoke::run_discovery(&common, &["--list"])
+    } else if benchexe::is_stored(&common, None, None, Build::Measure) {
+        invoke::run_bench_in(&common, &["--list"], None)
+    } else if may_build {
+        invoke::run_discovery(&common, &["--list"])
+    } else {
+        return Ok(None);
+    };
+    listed.map(Some).map_err(|e| e.to_string())
 }
 
-/// Every item and method of `surf`. `documented_strict` implies `documented`:
+/// Every item and method of `surf`, with `declared` the items benches cover
+/// (`None` when no bench could be listed). `documented_strict` implies `documented`:
 /// an example or a marker lifts a documented item, it does not stand in for
 /// the docs.
-fn rust_rows(surf: &Surface, declared: &BTreeSet<String>, marked: &BTreeSet<String>) -> Vec<Row> {
+fn rust_rows(
+    surf: &Surface,
+    declared: Option<&BTreeSet<String>>,
+    marked: &BTreeSet<String>,
+) -> Vec<Row> {
     let named = |set: &BTreeSet<String>, aliases: &[&String]| {
         aliases.iter().any(|a| set.contains(a.as_str()))
     };
@@ -241,7 +279,9 @@ fn rust_rows(surf: &Surface, declared: &BTreeSet<String>, marked: &BTreeSet<Stri
             documented_strict: Some(
                 c.info.has_docs && (c.info.example || named(marked, &c.aliases)),
             ),
-            measured_declared: (c.info.kind == "function").then(|| named(declared, &c.aliases)),
+            measured_declared: declared
+                .filter(|_| c.info.kind == "function")
+                .map(|declared| named(declared, &c.aliases)),
         })
         .collect()
 }
@@ -421,7 +461,7 @@ mod tests {
 
     #[test]
     fn a_fenced_example_or_a_bind_through_an_alias_lifts_a_documented_item() {
-        let rows = rust_rows(&surface(), &set(&[]), &set(&["d::alias::bound"]));
+        let rows = rust_rows(&surface(), Some(&set(&[])), &set(&["d::alias::bound"]));
         assert_eq!(row(&rows, "d::sorted").documented_strict, Some(true));
         assert_eq!(row(&rows, "d::bound").documented_strict, Some(true));
         assert_eq!(row(&rows, "d::bare").documented_strict, Some(false));
@@ -429,7 +469,7 @@ mod tests {
 
     #[test]
     fn a_marker_does_not_stand_in_for_the_docs() {
-        let rows = rust_rows(&surface(), &set(&[]), &set(&["d::blank"]));
+        let rows = rust_rows(&surface(), Some(&set(&[])), &set(&["d::blank"]));
         let blank = row(&rows, "d::blank");
         assert_eq!(
             (blank.documented, blank.documented_strict),
@@ -441,13 +481,20 @@ mod tests {
     fn only_callables_are_declared_measured() {
         let rows = rust_rows(
             &surface(),
-            &set(&["d::alias::sorted", "d::Thing::go"]),
+            Some(&set(&["d::alias::sorted", "d::Thing::go"])),
             &set(&[]),
         );
         assert_eq!(row(&rows, "d::sorted").measured_declared, Some(true));
         assert_eq!(row(&rows, "d::Thing::go").measured_declared, Some(true));
         assert_eq!(row(&rows, "d::bare").measured_declared, Some(false));
         assert_eq!(row(&rows, "d::Thing").measured_declared, None);
+    }
+
+    #[test]
+    fn without_a_listed_bench_measured_is_not_applicable() {
+        let rows = rust_rows(&surface(), None, &set(&["d::alias::bound"]));
+        assert!(rows.iter().all(|r| r.measured_declared.is_none()));
+        assert_eq!(row(&rows, "d::bound").documented_strict, Some(true));
     }
 
     #[test]
@@ -474,7 +521,7 @@ mod tests {
         let mut surf = Surface::default();
         surf.items
             .insert("demo::run".into(), info("function", 1, true, false));
-        let rows = rust_rows(&surf, &set(&[]), &markers.items(&records));
+        let rows = rust_rows(&surf, Some(&set(&[])), &markers.items(&records));
         assert_eq!(row(&rows, "demo::run").documented_strict, Some(true));
     }
 
@@ -498,7 +545,7 @@ mod tests {
 
     #[test]
     fn a_figure_is_short_only_below_a_minimum_that_is_set() {
-        let rows = rust_rows(&surface(), &set(&[]), &set(&[]));
+        let rows = rust_rows(&surface(), Some(&set(&[])), &set(&[]));
         let settings = |documented: Option<u32>, strict: Option<u32>| Settings {
             coverage: documented,
             minimums: strict
@@ -542,7 +589,7 @@ mod tests {
 
     #[test]
     fn the_summary_counts_over_applicable_rows_and_floors() {
-        let rows = rust_rows(&surface(), &set(&["d::sorted"]), &set(&[]));
+        let rows = rust_rows(&surface(), Some(&set(&["d::sorted"])), &set(&[]));
         let json = render_json(&rows);
         assert_eq!(json["summary"]["documented"]["total"], 6);
         assert_eq!(json["summary"]["documented"]["covered"], 5);
