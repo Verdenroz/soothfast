@@ -280,7 +280,7 @@ the standard <code>{ &quot;tools&quot;: [...] }</code> shape.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">document</span>(info: &amp;<span class="tok-ty">Info</span>, ops: &amp;[<span class="tok-ty">Operation</span>]) -&gt; <span class="tok-ty">Document</span>
 </code></pre></figure>
 <p>Assemble an OpenAPI 3.1 document.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.09 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_document`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">1226234</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">1278271</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">30152</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">4715065</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.11 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_document`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">1702331</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">1787268</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">30152</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">4715065</span></div></div></div>
 <h2 id="soothfast-spec-openapi-diff"><code>soothfast_spec::openapi::diff</code><a class="anchor" href="#soothfast-spec-openapi-diff" aria-label="Link to this section">#</a></h2>
 <h3 id="diff-function-3"><code>diff</code> <sup>function</sup><a class="anchor" href="#diff-function-3" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">diff</span>(old: &amp;<span class="tok-ty">Value</span>, new: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Change</span>&gt;
@@ -288,7 +288,7 @@ the standard <code>{ &quot;tools&quot;: [...] }</code> shape.</p>
 <p>Compare two generated documents, oldest first.</p>
 <p>Returns every difference found, breaking ones first, then by location so
 output is stable between runs.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.04 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_diff`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">3322816</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">3450795</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">77722</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">10815487</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.08 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_diff`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">4537162</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">5829136</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">77722</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">10815487</span></div></div></div>
 <h2 id="soothfast-spec-probe"><code>soothfast_spec::probe</code><a class="anchor" href="#soothfast-spec-probe" aria-label="Link to this section">#</a></h2>
 <h2 id="soothfast-spec-probe-assert"><code>soothfast_spec::probe::assert</code><a class="anchor" href="#soothfast-spec-probe-assert" aria-label="Link to this section">#</a></h2>
 <h3 id="assertion-struct"><code>Assertion</code> <sup>struct</sup><a class="anchor" href="#assertion-struct" aria-label="Link to this section">#</a></h3>
@@ -396,6 +396,27 @@ what's missing on each side, what disagrees, and what lined up.</p>
 </code></pre></figure>
 <p>Match routes to declared operations by operation id, then check that
 method and path agree where the route states them.</p>
+<h2 id="soothfast-spec-router"><code>soothfast_spec::router</code><a class="anchor" href="#soothfast-spec-router" aria-label="Link to this section">#</a></h2>
+<h3 id="routerdrift-struct"><code>RouterDrift</code> <sup>struct</sup><a class="anchor" href="#routerdrift-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">RouterDrift</span> { <span class="tok-kw">pub</span> unspecified: <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">RouterRoute</span>&gt;, <span class="tok-kw">pub</span> unserved: <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">DeclaredOp</span>&gt; }
+</code></pre></figure>
+<p>What the router and the spec disagree on.</p>
+<h3 id="routerroute-struct"><code>RouterRoute</code> <sup>struct</sup><a class="anchor" href="#routerroute-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">RouterRoute</span> { <span class="tok-kw">pub</span> method: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> path: <span class="tok-ty">String</span> }
+</code></pre></figure>
+<p>One <code>.route(&quot;path&quot;, verb(handler))</code> registration.</p>
+<h3 id="compare-function"><code>compare</code> <sup>function</sup><a class="anchor" href="#compare-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">compare</span>(routes: &amp;[<span class="tok-ty">RouterRoute</span>], declared: &amp;[<span class="tok-ty">DeclaredOp</span>]) -&gt; <span class="tok-ty">RouterDrift</span>
+</code></pre></figure>
+<p>Compare registrations with declared operations. Paths match on shape
+(<code>{id}</code>, <code>:id</code> and <code>{symbol}</code> are the same segment) and by suffix, since
+a <code>.nest(&quot;/v2&quot;, ..)</code> prefix is applied away from the registration.</p>
+<h3 id="scan-routes-function"><code>scan_routes</code> <sup>function</sup><a class="anchor" href="#scan-routes-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">scan_routes</span>(source: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">RouterRoute</span>&gt;
+</code></pre></figure>
+<p>Every <code>.route(&quot;&lt;literal&gt;&quot;, verb(..)[.verb(..)])</code> registration in <code>source</code>,
+one entry per verb. A call naming no verb, such as <code>any(h)</code>, is one entry
+with method <code>ANY</code>. <code>#[cfg(test)] mod</code> blocks are skipped.</p>
 <h2 id="soothfast-spec-schema"><code>soothfast_spec::schema</code><a class="anchor" href="#soothfast-spec-schema" aria-label="Link to this section">#</a></h2>
 <h3 id="docs-struct"><code>Docs</code> <sup>struct</sup><a class="anchor" href="#docs-struct" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Docs</span>&lt;<span class="tok-kw">&#39;a</span>&gt; {  }
@@ -559,7 +580,7 @@ of one document should not disagree about what comes first.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">to_yaml</span>(value: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
 </code></pre></figure>
 <p>Render a document as YAML, with well-known keys in conventional order.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x0.99 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_serialize_yaml`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">4338198</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">4459197</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">74277</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">8533615</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.01 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_serialize_yaml`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">5825024</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">6169179</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">74277</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">8533615</span></div></div></div>
 <h2 id="soothfast-spec-specified"><code>soothfast_spec::specified</code><a class="anchor" href="#soothfast-spec-specified" aria-label="Link to this section">#</a></h2>
 <h3 id="specified-struct"><code>Specified</code> <sup>struct</sup><a class="anchor" href="#specified-struct" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Specified</span> { <span class="tok-kw">pub</span> spec: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> operation: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> method: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> path: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> handler: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> in_spec: <span class="tok-ty">bool</span>, <span class="tok-kw">pub</span> mismatch: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">String</span>&gt;, <span class="tok-kw">pub</span> probed: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">bool</span>&gt; }
@@ -716,6 +737,16 @@ decides whether a probe exercises a route's operation.</p>
     <li><a class="toc-l3" href="#reconciliation-struct">Reconciliation struct</a></li>
   
     <li><a class="toc-l3" href="#reconcile-function">reconcile function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-router">soothfast_spec::router</a></li>
+  
+    <li><a class="toc-l3" href="#routerdrift-struct">RouterDrift struct</a></li>
+  
+    <li><a class="toc-l3" href="#routerroute-struct">RouterRoute struct</a></li>
+  
+    <li><a class="toc-l3" href="#compare-function">compare function</a></li>
+  
+    <li><a class="toc-l3" href="#scan-routes-function">scan_routes function</a></li>
   
     <li><a class="toc-l2" href="#soothfast-spec-schema">soothfast_spec::schema</a></li>
   

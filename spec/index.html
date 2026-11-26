@@ -466,6 +466,23 @@ finding and fails the job. So does a stale file that <code>spec gen --check</cod
 <p>With it, <code>ci spec</code> fails on a finding. Run directly,
 <code>spec gate</code> and <code>spec check</code> exit 0 when clean, 1 on a finding and 2 when
 they could not run, whatever <code>enforce</code> says.</p>
+<h2 id="checking-the-router">Checking the router<a class="anchor" href="#checking-the-router" aria-label="Link to this section">#</a></h2>
+<p>A generated spec cannot disagree with its <code>#[route]</code> markers, but the markers
+are written by hand and can disagree with the router that serves requests.
+For a <code>mode = &quot;generate&quot;</code> OpenAPI file, <code>spec check</code> also reads the package's
+<code>src/</code> for <code>.route(&quot;/path&quot;, get(handler).post(other))</code> registrations and
+prints a <code>note:</code> line for each operation the router serves that the spec
+lacks, and each the spec declares that no registration serves. The notes are
+advisory and never change the exit code.</p>
+<p>Paths match by shape, so <code>{id}</code>, <code>:id</code>, <code>*rest</code> and <code>{symbol}</code> are one
+segment, and by suffix, because a <code>.nest(&quot;/v2&quot;, ..)</code> prefix is applied away
+from the registration. The match is loose: a short registration such as
+<code>/{id}</code> serves any operation whose path ends in one segment. A registration
+that names no verb, such as <code>any(handler)</code>, serves every method.</p>
+<p>Comments and <code>#[cfg(test)] mod</code> blocks are ignored. Only axum-style literal
+<code>.route(..)</code> calls under the package's own <code>src/</code> are read. A package built on
+another framework, or one that registers no literal routes there, gets a
+single note saying the check was skipped.</p>
 <h2 id="reconciliation">Reconciliation<a class="anchor" href="#reconciliation" aria-label="Link to this section">#</a></h2>
 <div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_spec::reconcile::reconcile"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">reconcile</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
 <p><code>cargo soothfast spec check -p PKG</code> runs the bench binary with
@@ -661,6 +678,8 @@ scheduled workflow that files an issue on failure, not in PR CI.</p>
     <li><a class="toc-l2" href="#gating">Gating</a></li>
   
     <li><a class="toc-l3" href="#findings-in-ci">Findings in CI</a></li>
+  
+    <li><a class="toc-l2" href="#checking-the-router">Checking the router</a></li>
   
     <li><a class="toc-l2" href="#reconciliation">Reconciliation</a></li>
   
