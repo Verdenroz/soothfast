@@ -41,3 +41,9 @@ linkme = "=0.3.38"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

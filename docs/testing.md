@@ -256,6 +256,35 @@ The command ends with a summary and exits non-zero if anything failed:
 test: 3 of 10 packages selected, 9 binaries run, 4 skipped (cached), doc tests in 3 packages
 ```
 
+## A lighter debug profile
+
+Test builds carry full debuginfo, which most of the time is spent writing
+and most of `target/debug` is spent holding. `cargo soothfast init` suggests
+this profile when the workspace root `Cargo.toml` sets no `debug` under
+`[profile.dev]`, and `init --dev-profile` writes it:
+
+```toml
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+```
+
+On soothfast itself, `cargo test --no-run -p cargo-soothfast` at 8 jobs went
+from 11.3 s to 10.0 s cold (median of three), and `target/debug` from 1376 MB
+to 828 MB. An incremental rebuild after editing one function body took about
+1.3 s (default) and 1.5 s (proposed), within noise, so the gain is in cold
+builds and disk, not the edit loop.
+A panicking test still prints `file:line` for every frame in the workspace
+under `RUST_BACKTRACE=1`. Frames inside dependencies lose their line numbers,
+and a debugger loses local variables, so leave `debug` alone for either need.
+
+`test` inherits `dev`, so it follows. `release` and `bench` are never touched:
+`bench` inherits `release`, and that is the profile the perf gate measures, so
+the profile cannot move a gate number. `init --check` does not report a
+missing profile, since it is advice and not something the gate needs.
+
 ## In CI
 
 The selection needs history to find a merge-base, and the pass cache needs to

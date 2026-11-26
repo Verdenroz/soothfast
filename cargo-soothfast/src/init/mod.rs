@@ -13,6 +13,7 @@ mod detect;
 pub(crate) mod ecosystem;
 mod labels;
 mod lookup;
+mod profile;
 mod report;
 mod rust;
 mod scaffold;
@@ -58,6 +59,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
     let mut no_bot = false;
     let mut labels = false;
     let mut no_labels = false;
+    let mut dev_profile = false;
     let mut bench: Vec<String> = Vec::new();
     let mut flags = Settings::default();
     let mut dir: Option<String> = None;
@@ -76,6 +78,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
             "--no-bot" => no_bot = true,
             "--labels" => labels = true,
             "--no-labels" => no_labels = true,
+            "--dev-profile" => dev_profile = true,
             "-p" | "--package" => match it.next() {
                 Some(p) => bench.push(p.clone()),
                 None => return err("-p needs a package to add a bench target to"),
@@ -145,6 +148,12 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
     ws.labels = labels;
     for note in &notes {
         println!("{note}");
+    }
+    if ws.rust {
+        match profile::dev_profile(root, dev_profile && !check) {
+            Ok(line) => line.iter().for_each(|l| println!("{l}")),
+            Err(e) => return err(&e),
+        }
     }
     let callers = other_callers(root);
     for caller in &callers {
