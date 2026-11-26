@@ -216,6 +216,45 @@ named `node_modules`, `build`, `target`, `dist`, `venv`, `test`, `tests` or
 `__tests__`, and hidden directories, are skipped. `coverage report --dir D
 --lang L` prints the same symbols with `documented` only.
 
+## Items the gate never compiles
+
+Coverage is computed under one feature set, so a public item behind any other
+feature is missing from every denominator and no report says so.
+`cargo soothfast coverage features` lists the features of a package that its
+gate does not enable, with the number of public items behind each:
+
+```bash
+cargo soothfast coverage features -p mylib
+cargo soothfast coverage features -p mylib --json
+cargo soothfast coverage features -p mylib --max-outside 0
+```
+
+The gate's set is the one `gate` resolves for the package (`[gate] features`,
+`[package.X.gate]`), with the package's defaults on. The reference surface is a
+rustdoc build with `--all-features`; an item it has and the gate's surface
+lacks is outside the gate. Items are public functions, types and inherent
+methods, not trait-impl methods or `#[doc(hidden)]` items.
+
+rustdoc records each item's `#[cfg(feature = "...")]`, and an item also takes
+the features of the module, type or `impl` block around it. The features of a
+`cfg` that the gate does not enable get the credit, so under
+`all(feature = "a", feature = "b")` with `a` on, the item counts for `b`. An
+item gated on several features, as with `any(..)`, counts under each, so the
+per-feature counts can sum to more than the outside total. An item gated
+by `not(feature = "x")` exists only while `x` is off, so a gate with `x` on
+misses it and `--all-features` does not have it either. A build with no
+features finds those; they are counted apart as `off under a feature`. An item
+whose `cfg` names no feature the parser can read, or whose gating sits on a
+private module that a `pub use` re-exports, is listed as `(cfg not read)`, with
+a warning that names the rustdoc JSON format the parser was written for.
+
+A package whose features cannot all be on at once (a `compile_error!` under
+`--all-features`) is measured one feature at a time instead: the gate's set
+plus that feature, one rustdoc run each, and the output says so.
+
+The command reports and exits 0. `--max-outside N` fails it when more than `N`
+items are outside the gate.
+
 ## Fence tags on rust code blocks
 
 | tag | effect |
