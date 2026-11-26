@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use soothfast_docs::surface::{ItemInfo, Span, Surface};
+use soothfast_docs::surface::{Span, Surface};
 
 /// Region kind 0 in the export format: counted code, as opposed to
 /// expansion, skipped, gap and branch regions.
@@ -97,57 +97,44 @@ fn resolved(path: &Path) -> PathBuf {
 /// One public item counted in the denominator.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Declared<'a> {
-    pub path: &'a str,
+    pub path: String,
     pub kind: &'a str,
     pub spans: &'a [Span],
 }
 
-/// The public functions, types and inherent methods of a surface, one per
-/// definition: re-export spellings of an item collapse to the shortest path.
-/// Trait-impl methods never enter `Surface::members`, so they are excluded.
+/// The public functions, types and inherent methods of a surface: the items
+/// `Surface::counted` yields that can run.
 pub fn declared(surface: &Surface) -> Vec<Declared<'_>> {
     const KINDS: [&str; 5] = ["function", "struct", "enum", "union", "trait"];
-    let mut by_definition: BTreeMap<(&str, u32, &str), Declared<'_>> = BTreeMap::new();
-    let entries = surface.items.iter().chain(&surface.members);
-    for (path, info) in entries.filter(|(_, info)| KINDS.contains(&info.kind.as_str())) {
-        let Some(first) = info.spans.first() else {
-            continue;
-        };
-        let key = (first.file.as_str(), first.begin, info.kind.as_str());
-        if by_definition
-            .get(&key)
-            .is_none_or(|held| path.len() < held.path.len())
-        {
-            by_definition.insert(key, declared_item(path, info));
-        }
-    }
-    by_definition.into_values().collect()
-}
-
-fn declared_item<'a>(path: &'a str, info: &'a ItemInfo) -> Declared<'a> {
-    Declared {
-        path,
-        kind: &info.kind,
-        spans: &info.spans,
-    }
+    surface
+        .counted()
+        .into_iter()
+        .filter(|c| KINDS.contains(&c.info.kind.as_str()) && !c.info.spans.is_empty())
+        .map(|c| Declared {
+            path: c.path,
+            kind: &c.info.kind,
+            spans: &c.info.spans,
+        })
+        .collect()
 }
 
 /// The declared items any counted region reaches.
-pub fn executed<'a>(
-    declared: &[Declared<'a>],
+pub fn executed<'d>(
+    declared: &'d [Declared<'_>],
     root: &Path,
     regions: &Regions,
-) -> BTreeSet<&'a str> {
+) -> BTreeSet<&'d str> {
     declared
         .iter()
         .filter(|item| regions.reaches(root, item.spans))
-        .map(|item| item.path)
+        .map(|item| item.path.as_str())
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use soothfast_docs::surface::ItemInfo;
 
     use super::*;
 
@@ -165,6 +152,7 @@ mod tests {
             fingerprint: 1,
             signature: String::new(),
             has_docs: false,
+            example: false,
             spans,
         }
     }
@@ -300,7 +288,7 @@ mod tests {
         let f = info("function", vec![span(1, 3)]);
         surface.items.insert("demo::deep::run".into(), f.clone());
         surface.items.insert("demo::run".into(), f);
-        let paths: Vec<_> = declared(&surface).iter().map(|d| d.path).collect();
+        let paths: Vec<String> = declared(&surface).into_iter().map(|d| d.path).collect();
         assert_eq!(paths, ["demo::run"]);
     }
 
@@ -317,9 +305,12 @@ mod tests {
             .items
             .insert("demo::f".into(), info("function", Vec::new()));
         surface
+            .items
+            .insert("demo::T".into(), info("struct", vec![span(3, 3)]));
+        surface
             .members
             .insert("demo::T::go".into(), info("function", vec![span(4, 6)]));
-        let paths: Vec<_> = declared(&surface).iter().map(|d| d.path).collect();
-        assert_eq!(paths, ["demo::T::go"]);
+        let paths: Vec<String> = declared(&surface).into_iter().map(|d| d.path).collect();
+        assert_eq!(paths, ["demo::T", "demo::T::go"]);
     }
 }

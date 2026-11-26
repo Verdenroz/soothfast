@@ -138,6 +138,42 @@ an imported id that contains ` - ` still reads as one item. The bound applies
 to the left value minus the right. A side with no measurement fails the claim and
 the message names it; a ` -` with nothing after it fails to parse.
 
+## Coverage
+
+`cargo soothfast coverage docs -p PKG` and `coverage measure -p PKG` count the
+same public surface. It is every public item (functions, types, traits,
+constants, statics, modules and macros) and every inherent method, once each
+however many `pub use` paths spell it. Trait-impl methods and `#[doc(hidden)]`
+items are not counted, and neither are associated consts. `coverage docs`
+counts all of it; `coverage measure` counts only the callables, functions and
+methods. A minimum fails the run only when one is set, by `--min` or by
+`coverage` in `[docs]` or `[package.NAME.docs]`.
+
+`cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json]`
+prints one row per item and a summary per dimension:
+
+| Dimension | An item is covered when |
+| --- | --- |
+| `documented` | its doc comment has text |
+| `documented+` | it is documented and its docs hold a fenced Rust example, or a `soothfast:bind` or `soothfast:claim` marker in the repo's tracked markdown names its path or a re-export of it; a claim names a bench, so it counts through that bench's `covers` (or the bench's own id), and only in a package with a bench target |
+| `measured (declared)` | a bench's `covers` names it, or the bench is the item; callables only, other items show `n/a` |
+
+A fence counts as an example unless it names another language: no language,
+`rust` and rustdoc attributes such as `no_run`, `ignore` and `compile_fail`
+all count. `measured (declared)` reads what the benches declare; it does not
+check that the bench runs the item. A `covers` that names no public item of
+the package prints `warning: bench ID covers PATH, which is not a public item
+of PKG` on stderr, from `coverage report` and `coverage measure` alike.
+
+With `--json`, stdout is one object, `items` holding `path`, `kind`,
+`documented`, `documented_strict` and `measured_declared` per item, and
+`summary` holding `covered`, `total` and `pct` per dimension. A dimension a
+tree cannot tell, such as `documented+` for a non-Rust tree, is `null`, and
+the text report shows `n/a`.
+
+Coverage counts what the gate compiles: without `--features` it uses the
+package's features, else the gate's `features` for it.
+
 ## Doc coverage outside Rust
 
 `cargo soothfast coverage docs` counts public symbols with a doc comment or
@@ -157,7 +193,8 @@ and Kotlin (Kotlin's default; `private`, `internal` and `protected` are not),
 `export default a`), and a name without a leading
 underscore in Python. Members count only when their container does. Trees
 named `node_modules`, `build`, `target`, `dist`, `venv`, `test`, `tests` or
-`__tests__`, and hidden directories, are skipped.
+`__tests__`, and hidden directories, are skipped. `coverage report --dir D
+--lang L` prints the same symbols with `documented` only.
 
 ## Fence tags on rust code blocks
 

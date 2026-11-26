@@ -56,6 +56,7 @@ fn to_value(surface: &Surface) -> Value {
                     "fingerprint": info.fingerprint,
                     "signature": info.signature,
                     "has_docs": info.has_docs,
+                    "example": info.example,
                 });
                 (path.clone(), item)
             })
@@ -75,6 +76,7 @@ fn from_value(doc: &Value) -> Option<Surface> {
                     signature: item["signature"].as_str()?.to_string(),
                     has_docs: item["has_docs"].as_bool()?,
                     spans: Vec::new(),
+                    example: item["example"].as_bool()?,
                 };
                 Some((path.clone(), info))
             })
@@ -100,6 +102,7 @@ mod tests {
             signature: format!("pub {kind} x"),
             has_docs: fingerprint.is_multiple_of(2),
             spans: Vec::new(),
+            example: fingerprint.is_multiple_of(4),
         };
         let mut s = Surface::default();
         s.items

@@ -78,6 +78,7 @@ fn surface(entries: &[Entry]) -> Surface {
                 signature: String::new(),
                 has_docs: e.documented,
                 spans: Vec::new(),
+                example: false,
             },
         );
     }

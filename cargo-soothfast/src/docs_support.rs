@@ -264,6 +264,7 @@ mod tests {
                 signature: format!("pub fn {path}()"),
                 has_docs: true,
                 spans: Vec::new(),
+                example: false,
             };
             s.items.insert(path.to_string(), info);
         }

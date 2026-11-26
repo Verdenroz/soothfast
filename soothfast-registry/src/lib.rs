@@ -156,6 +156,7 @@ impl Assertions {
         Assertions::new(None, None, None)
     }
 
+    /// Whether no assertion is set.
     pub const fn is_empty(&self) -> bool {
         self.max_allocs.is_none() && self.p99_ns.is_none() && self.complexity.is_none()
     }

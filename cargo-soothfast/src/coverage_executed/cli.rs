@@ -97,7 +97,7 @@ impl Columns<'_> {
                 let mut item = json!({ "path": d.path, "kind": d.kind });
                 for (name, set) in [("tested", &self.tested), ("measured", &self.measured)] {
                     if let Some(set) = set {
-                        item[name] = json!(set.contains(d.path));
+                        item[name] = json!(set.contains(d.path.as_str()));
                     }
                 }
                 item
@@ -113,8 +113,8 @@ impl Columns<'_> {
             None => String::new(),
         };
         for d in declared {
-            let tested = mark(&self.tested, d.path, "tested");
-            let measured = mark(&self.measured, d.path, "measured");
+            let tested = mark(&self.tested, &d.path, "tested");
+            let measured = mark(&self.measured, &d.path, "measured");
             println!("{tested} {measured} {} ({})", d.path, d.kind);
         }
         for (name, set) in [("tested", &self.tested), ("measured", &self.measured)] {
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn json_omits_a_column_that_did_not_run() {
         let declared = [Declared {
-            path: "demo::run",
+            path: "demo::run".into(),
             kind: "function",
             spans: &[],
         }];
