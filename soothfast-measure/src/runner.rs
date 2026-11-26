@@ -10,7 +10,7 @@ use soothfast_registry::{Bencher, MeasuredItem, fixture_items, measured_items, r
 use std::cell::Cell;
 
 use crate::json::esc;
-use crate::{alloc, asyncexec, callgrind, clientreq, sweep, walltime};
+use crate::{alloc, asyncexec, callgrind, clientreq, filter, sweep, walltime};
 
 #[derive(PartialEq, Clone, Copy)]
 enum Backend {
@@ -389,7 +389,7 @@ pub fn main() {
         }
     }
     if let Some(f) = &args.filter {
-        entries.retain(|e| e.id.contains(f.as_str()));
+        entries.retain(|e| filter::matches(f, &e.id));
     }
     if !args.ids.is_empty() {
         entries.retain(|e| args.ids.contains(&e.id));
@@ -423,6 +423,15 @@ pub fn main() {
                  registrations reach the linker",
             );
         } else {
+            if let Some(f) = args
+                .filter
+                .as_deref()
+                .filter(|f| filter::has_unsupported_syntax(f))
+            {
+                eprintln!(
+                    "soothfast runner: warning: --filter {f:?} is a substring match; only `|`, a leading `^` and a trailing `$` are special"
+                );
+            }
             die(&format!(
                 "no measured items match --filter {:?}",
                 args.filter.as_deref().unwrap_or("")
