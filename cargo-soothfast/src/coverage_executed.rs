@@ -21,7 +21,8 @@ pub fn tests(pkg: &str, features: Option<&str>) -> Result<Regions, String> {
     let tools = tools::locate()?;
     let build = instrument::Instrumented::new(pkg, features, tools::host_triple()?)?;
     let executables = instrument::build_tests(&build)?;
-    cache::through("tests", &executables, || {
+    let scope = format!("tests {pkg} {}", features.unwrap_or_default());
+    cache::through(&scope, pkg, &executables, || {
         run_and_export(&tools, &executables, "tests", build.tests(false))
     })
 }
@@ -38,7 +39,11 @@ pub fn benches(common: &CommonArgs) -> Result<Regions, String> {
         instrument::Instrumented::new(pkg, common.features.as_deref(), tools::host_triple()?)?;
     let executable = instrument::build_bench(&build, target)?;
     let executables = [executable];
-    cache::through("benches", &executables, || {
+    let scope = format!(
+        "benches {pkg} {target} {}",
+        common.features.as_deref().unwrap_or_default()
+    );
+    cache::through(&scope, pkg, &executables, || {
         run_and_export(
             &tools,
             &executables,

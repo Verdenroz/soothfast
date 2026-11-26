@@ -178,8 +178,10 @@ Profiles go to a temporary directory and are merged by `llvm-profdata`, then
 llvm-tools` when they are missing.
 
 The executed regions are kept under `.soothfast/coverage/`, keyed on the
-bytes of the instrumented executables. An unchanged tree reruns nothing: the
-rerun builds, finds the executables unchanged, and reads the stored regions.
+bytes of the instrumented executables and on the inputs the `test` pass cache
+keys on: the package's files, `[test] inputs`, the `[test] env` values and the
+compiler version. An unchanged tree reruns nothing: the rerun builds, finds
+the key unchanged, and reads the stored regions.
 
 ## The statistics underneath
 
