@@ -248,6 +248,51 @@ fn fold_siblings(mut digests: Vec<(String, String)>) -> String {
     hashed(&joined)
 }
 
+/// Digest of what a package's tests read besides their executables: the
+/// package's files, the files that select every package, the `[test] env`
+/// values and the rustc version.
+pub(crate) fn environment(
+    root: &Path,
+    pkgs: &[Package],
+    cfg: &TestConfig,
+    package: &str,
+) -> Result<String, String> {
+    let pkg = pkgs
+        .iter()
+        .find(|p| p.name == package)
+        .ok_or_else(|| format!("no workspace package named {package:?}"))?;
+    let env: Vec<String> = env_values(&cfg.env)
+        .iter()
+        .map(|(n, v)| format!("{n}={v}"))
+        .collect();
+    Ok(hashed(&[
+        package_inputs(root, pkgs, cfg, pkg).map_err(|e| e.to_string())?,
+        workspace_inputs(root, pkgs, cfg).map_err(|e| e.to_string())?,
+        env.join("\u{2}"),
+        buildstamp::rustc_vv(None).map_err(|e| e.to_string())?,
+    ]))
+}
+
+/// [`environment`] widened by the files of every workspace package `package`
+/// depends on.
+pub(crate) fn environment_with_dependencies(
+    root: &Path,
+    pkgs: &[Package],
+    cfg: &TestConfig,
+    package: &str,
+) -> Result<String, String> {
+    let mut parts = vec![environment(root, pkgs, cfg, package)?];
+    for pkg in select::with_dependencies(pkgs, package)
+        .iter()
+        .filter(|name| *name != package)
+        .filter_map(|name| pkgs.iter().find(|p| p.name == *name))
+    {
+        let inputs = package_inputs(root, pkgs, cfg, pkg).map_err(|e| e.to_string())?;
+        parts.push(format!("{}\u{0}{inputs}", pkg.name));
+    }
+    Ok(hashed(&parts))
+}
+
 /// Digest of the files under a package dir, tracked or not yet
 /// committed.
 fn package_inputs(
@@ -505,6 +550,31 @@ mod tests {
         for parts in moved {
             assert_ne!(doc_key_of(parts), original);
         }
+    }
+
+    #[test]
+    fn a_package_file_change_moves_the_environment() {
+        let repo = TempRepo::new("environment");
+        repo.write("app/src/lib.rs", "pub fn f() {}\n");
+        repo.write("app/tests/golden.txt", "one\n");
+        repo.write("other/src/lib.rs", "pub fn g() {}\n");
+        repo.git(&["add", "."]);
+        repo.commit();
+        let pkg = |name: &str| Package {
+            name: name.into(),
+            dir: name.into(),
+            manifest_dir: repo.root.join(name),
+            deps: Vec::new(),
+        };
+        let pkgs = [pkg("app"), pkg("other")];
+        let cfg = TestConfig::default();
+        let digest = || environment(&repo.root, &pkgs, &cfg, "app").unwrap();
+        let before = digest();
+        assert_eq!(before, digest());
+        repo.write("other/src/lib.rs", "pub fn g() -> u8 { 1 }\n");
+        assert_eq!(before, digest());
+        repo.write("app/tests/golden.txt", "two\n");
+        assert_ne!(before, digest());
     }
 
     #[test]

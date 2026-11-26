@@ -138,18 +138,6 @@ an imported id that contains ` - ` still reads as one item. The bound applies
 to the left value minus the right. A side with no measurement fails the claim and
 the message names it; a ` -` with nothing after it fails to parse.
 
-Two advisory lints run beside the claim check. Neither fails `docs check`;
-they print as `warn` lines and in the verdict.
-
-- A held claim whose bound is more than 4x from the measured value (the
-  bound over the measured value for `<`/`<=`, the reverse for `>`/`>=`)
-  guards nothing. The warning names the claim, the bound, the measured value
-  and the ratio. A measured value of zero has no ratio and is not flagged.
-- The same `item.backend.metric` claimed twice in the same direction with
-  different bounds, on one page or two, contradicts itself. The warning names
-  both `file:line` locations. A floor and a ceiling on one metric state a
-  range and are not flagged.
-
 ## Coverage
 
 `cargo soothfast coverage docs -p PKG` and `coverage measure -p PKG` count the
@@ -161,20 +149,39 @@ counts all of it; `coverage measure` counts only the callables, functions and
 methods. A minimum fails the run only when one is set, by `--min` or by
 `coverage` in `[docs]` or `[package.NAME.docs]`.
 
-`cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json] [--check]`
+`cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json] [--check] [--executed] [--features-section]`
 prints one row per item and a summary per dimension:
 
 | Dimension | An item is covered when |
 | --- | --- |
 | `documented` | its doc comment has text |
 | `documented+` | it is documented and its docs hold a fenced Rust example, or a `soothfast:bind` or `soothfast:claim` marker in the repo's tracked markdown names its path or a re-export of it; a claim names a bench, so it counts through that bench's `covers` (or the bench's own id), and only in a package with a bench target |
+| `tested` | the package's tests execute a line of it (doc tests are not instrumented) |
 | `measured (declared)` | a bench's `covers` names it, or the bench is the item; callables only, other items show `n/a` |
+| `measured` | the package's bench target executes a line of it, one pass over each bench |
 | `gated` | a bench in the gate's feature set declares it, through its `covers` or as the bench itself; callables only, other items show `n/a` |
+| `specified` | it is the handler of a route or tool, and the committed spec declares every one it serves and, for routes, a probe exercises it; every other item shows `n/a` |
 
 A fence counts as an example unless it names another language: no language,
 `rust` and rustdoc attributes such as `no_run`, `ignore` and `compile_fail`
 all count. `measured (declared)` reads what the benches declare; it does not
-check that the bench runs the item.
+check that the bench runs the item. `tested` and `measured` do: they build the
+package with `-C instrument-coverage` into their own target directory, run its
+tests and its bench target (one pass over each item), and credit an item when
+a counted region of the run shares a line with it. They cover functions,
+types and inherent methods; other items show `n/a`, as does `measured` for a
+package with no bench target.
+
+That build is expensive, so a plain `coverage report` runs it only with
+`--executed`. Without the flag it reads the stored run for the tree as it is
+now, keyed on the package's files, those of every workspace crate it depends
+on, the workspace inputs, `Cargo.lock`, `rustc -vV` and the run, and prints
+`(cached run from DATE)` beside the figure so a reader knows it is not fresh.
+With no stored run, `tested` and `measured` read `n/a (not run: pass
+--executed)`. A figure over several packages counts only those that ran; the
+summary then adds `N package(s) not run` and the figure is a lower bound. Only a run that finished is stored: a bench run that exits
+non-zero still yields a figure, but a lower bound (`partial` in the JSON, `lower
+bound` in the text) that is not kept, and a failing test run is an error.
 
 `gated` reads the registry under the gate's features (`[gate] features`, or
 `[package.NAME.gate]`), not the report's. Where they differ, the report builds
@@ -186,7 +193,9 @@ the package prints `warning: bench ID covers PATH, which is not a public item
 of PKG` on stderr, from `coverage report` and `coverage measure` alike.
 
 With `--json`, stdout is one object, `items` holding `path`, `kind`,
-`documented`, `documented_strict`, `measured_declared` and `gated` per item, and
+`documented`, `documented_strict`, `tested`, `measured_declared`, `measured`,
+`gated` and `specified` per item, a `features` array with one `coverage
+features` object per package, and
 `summary` holding `covered`, `total` and `pct` per dimension. A dimension a
 tree cannot tell, such as `documented+` for a non-Rust tree, is `null`, and
 the text report shows `n/a`.
@@ -199,8 +208,23 @@ record. It exits 1 when a minimum is not met, and 2 when the report could not be
 built and a minimum is set; with no minimum set it prints
 `coverage could not run: ERROR` and exits 0. A package with no minimum on `documented_strict`, `measured_declared` or
 `gated` reads a stored bench executable if there is one and never builds it;
-`measured (declared)` and `gated` are then `n/a`, and `documented+` is a lower bound (its
-text carries `claims not read`, and `partial` is true in the figure).
+`measured (declared)`, `gated` and `specified` are then `n/a`, and `documented+` is a lower bound (its
+text carries `claims not read`, and `partial` is true in the figure). The
+instrumented run happens under `--check` only for a package with a `tested` or
+`measured` minimum; otherwise both are `n/a`, and a stored run is not read.
+Each column follows its own minimum: a `tested` minimum starts only the test
+run, a `measured` minimum only the bench run. `--check --executed` runs both.
+
+A `specified` figure needs the package's spec files and a route listing. When
+either cannot be read the report prints a warning, shows `specified` as `n/a`
+and fails only if the package sets a `specified` minimum.
+
+With `--features-section`, the report ends with the `coverage features`
+section for each package: how many public items sit outside the gate's
+feature set, per feature (a `features` array in `--json`). It is off by
+default because it costs up to three rustdoc builds per package, and a package
+whose section cannot be built is left out with a warning. See [items the gate
+never compiles](#items-the-gate-never-compiles).
 
 Coverage counts what the gate compiles: without `--features` it uses the
 package's features, else the gate's `features` for it.
