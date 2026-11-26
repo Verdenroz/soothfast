@@ -435,7 +435,8 @@ advisory and never change the exit code.
 
 Paths match by shape, so `{id}`, `:id` and `{symbol}` are one segment, and by
 suffix, because a `.nest("/v2", ..)` prefix is applied away from the
-registration. Code after a `#[cfg(test)]` marker is skipped. Only axum-style
+registration. Comments are ignored, and code after the first `#[cfg(test)]`
+marker is skipped, including anything that follows a mid-file test module. Only axum-style
 literal `.route(..)` calls are read; a package built on another framework, or
 one that registers no literal routes, gets a single note saying the check was
 skipped.

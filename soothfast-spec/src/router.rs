@@ -30,7 +30,7 @@ pub struct RouterDrift {
 /// Every `.route("<literal>", verb(..)[.verb(..)])` registration in `source`,
 /// one entry per verb. Code after the first `#[cfg(test)]` is skipped.
 pub fn scan_routes(source: &str) -> Vec<RouterRoute> {
-    let live = source.split("#[cfg(test)]").next().unwrap_or(source);
+    let live = &strip_comments(source.split("#[cfg(test)]").next().unwrap_or(source));
     let bytes = live.as_bytes();
     let mut out = Vec::new();
     let mut at = 0;
@@ -80,6 +80,9 @@ pub fn compare(routes: &[RouterRoute], declared: &[DeclaredOp]) -> RouterDrift {
 fn suffix_of(spec_path: &str, route_path: &str) -> bool {
     let spec = segments(spec_path);
     let route = segments(route_path);
+    if route.is_empty() {
+        return spec.is_empty();
+    }
     spec.len() >= route.len() && spec[spec.len() - route.len()..] == route[..]
 }
 
@@ -87,13 +90,43 @@ fn segments(path: &str) -> Vec<String> {
     path.split('/')
         .filter(|s| !s.is_empty())
         .map(|s| {
-            if s.starts_with(':') || (s.starts_with('{') && s.ends_with('}')) {
+            if s.starts_with(':') || s.starts_with('*') || (s.starts_with('{') && s.ends_with('}'))
+            {
                 "{}".to_string()
             } else {
                 s.to_string()
             }
         })
         .collect()
+}
+
+/// `source` with line and block comments blanked, string literals kept.
+fn strip_comments(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let end = match (bytes[i], bytes.get(i + 1)) {
+            (b'"', _) => string_end(bytes, i).map_or(bytes.len(), |e| e + 1),
+            (b'/', Some(b'/')) => source[i..].find('\n').map_or(bytes.len(), |n| i + n),
+            (b'/', Some(b'*')) => source[i + 2..]
+                .find("*/")
+                .map_or(bytes.len(), |n| i + 2 + n + 2),
+            _ => {
+                let ch = source[i..].chars().next().map_or(1, char::len_utf8);
+                out.push_str(&source[i..i + ch]);
+                i += ch;
+                continue;
+            }
+        };
+        if bytes[i] == b'"' {
+            out.push_str(&source[i..end]);
+        } else {
+            out.push(' ');
+        }
+        i = end;
+    }
+    out
 }
 
 /// The index of the `)` closing the `(` at `open`, skipping string literals.
@@ -226,6 +259,28 @@ mod tests {
     fn skips_test_modules_and_non_literal_paths() {
         let src = "r.route(PATH, get(a)).route(\"/live\", get(b))\n#[cfg(test)]\nmod t { fn f() { r.route(\"/t\", get(c)); } }";
         assert_eq!(scan_routes(src), [route("GET", "/live")]);
+    }
+
+    #[test]
+    fn ignores_commented_out_routes_but_not_slashes_in_strings() {
+        let src = "// r.route(\"/old\", get(h))\n/* r.route(\"/older\", get(h)) */\nr.route(\"/a//b\", get(h))";
+        assert_eq!(scan_routes(src), [route("GET", "/a//b")]);
+    }
+
+    #[test]
+    fn the_root_route_serves_only_the_root_path() {
+        let drift = compare(&[route("GET", "/")], &[op("GET", "/items"), op("GET", "/")]);
+        assert_eq!(drift.unserved, [op("GET", "/items")]);
+        assert!(drift.unspecified.is_empty());
+    }
+
+    #[test]
+    fn wildcard_segments_are_one_placeholder() {
+        let drift = compare(
+            &[route("GET", "/files/*rest")],
+            &[op("GET", "/files/{*path}")],
+        );
+        assert!(drift.unserved.is_empty() && drift.unspecified.is_empty());
     }
 
     #[test]
