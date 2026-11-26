@@ -1129,70 +1129,18 @@ jobs:
             action.yml
             Cargo.toml
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: ./.soothfast-action/action/check
         with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: check-${{ matrix.kind }}
-      - uses: ./.soothfast-action/action/install
-      - name: Install the pinned rustdoc toolchain
-        if: matrix.rustdoc
-        run: ./.soothfast-action/action/rustdoc-toolchain.sh
-      # Entries are named for the toolchain, flags and sources they came from,
-      # so a restored store only saves the builds whose inputs did not change.
-      - name: Restore and save the rustdoc and executable stores
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            .soothfast/rustdoc
-            .soothfast/bins
-          key: soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-
-            soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
-            soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.repository.default_branch }}-
-      - name: Check
-        env:
-          KIND: ${{ matrix.kind }}
-          PACKAGE: ${{ matrix.package }}
-          SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
-        run: cargo soothfast ci "$KIND" ${PACKAGE:+-p "$PACKAGE"}
-      # Both lanes are store hits after the check, so this only copies what
-      # the site's routes pages and the regeneration read.
-      - name: Stage the spec builds
-        if: >-
-          ${{ !cancelled() && matrix.kind == 'spec'
-          && (needs.plan.outputs.site_in_docs == 'true'
-          || (inputs.bot && github.event_name == 'push'
-          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-          && needs.plan.outputs.generated != 'true')) }}
-        env:
-          PACKAGE: ${{ matrix.package }}
-          STAGE: ${{ runner.temp }}/store
-        run: |
-          for lane in routes rustdoc; do
-            cargo soothfast ci build "$lane" --stage "$STAGE" ${PACKAGE:+--spec "$PACKAGE"} \
-              || echo "::warning::could not stage the $lane builds"
-          done
-          if [ -d "$STAGE" ]; then tar -C "$STAGE" -cf "$RUNNER_TEMP/store.tar" .; fi
-      # Only the staging step writes the tar, so nothing uploads without it.
-      - name: Upload the spec builds
-        if: ${{ !cancelled() && matrix.kind == 'spec' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: soothfast-store-${{ matrix.name }}
-          path: ${{ runner.temp }}/store.tar
-          if-no-files-found: ignore
-          retention-days: 1
-          compression-level: 1
-      - name: Upload the check result
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: soothfast-result-${{ matrix.name }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/soothfast-results
-          if-no-files-found: ignore
+          kind: ${{ matrix.kind }}
+          package: ${{ matrix.package }}
+          name: ${{ matrix.name }}
+          rustdoc: ${{ matrix.rustdoc }}
+          stage: >-
+            ${{ needs.plan.outputs.site_in_docs == 'true'
+            || (inputs.bot && github.event_name == 'push'
+            && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+            && needs.plan.outputs.generated != 'true') }}
+          regen: ${{ inputs.bot }}
 
   verdict:
     name: verdict
