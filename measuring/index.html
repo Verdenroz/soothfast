@@ -175,6 +175,36 @@ suite. Every soothfast crate carries one and measures itself this way.
 <code>cargo soothfast measure</code> runs it under every available backend, and <code>cargo
 soothfast gate</code> compares against a baseline or merge-base and exits non-zero
 on a regression.</p>
+<h2 id="benches-inside-the-crate">Benches inside the crate<a class="anchor" href="#benches-inside-the-crate" aria-label="Link to this section">#</a></h2>
+<p>A bench target is a separate crate, so it reaches only public items. To
+measure a private or <code>pub(crate)</code> function, put the bench in the crate beside
+it, behind a cargo feature named <code>soothfast</code>, and make the dependency
+optional so the feature switches it on:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[dependencies]</span>
+<span class="tok-ty">soothfast </span>= { version = &quot;0.8&quot;, optional = true }
+
+<span class="tok-kw">[dev-dependencies]</span>
+<span class="tok-ty">soothfast </span>= { version = &quot;0.8&quot;, features = [&quot;runner&quot;] }</code></pre></figure>
+<p><code>cargo soothfast init -p PKG --internals</code> writes the dev-dependency, the bench
+target and its stub, and the optional dependency. That dependency gives the
+package a <code>soothfast</code> feature with no <code>[features]</code> line, and the stub's
+<code>use my_crate as _;</code> links whatever the crate registers:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-mac">#[cfg(feature = &quot;soothfast&quot;)]</span>
+<span class="tok-mac">#[soothfast::bench(group = &quot;wire&quot;, setup = wire_quote,
+                   covers = &quot;crate::adapters::yahoo::parse_quotes_batch&quot;)]</span>
+<span class="tok-kw">fn</span> <span class="tok-fn">de_quote_batch</span>(json: &amp;<span class="tok-ty">String</span>) {
+    soothfast::<span class="tok-fn">keep</span>(<span class="tok-fn">parse_quotes_batch</span>(json));
+}
+</code></pre></figure>
+<p><code>measure</code>, <code>gate</code>, <code>coverage</code> and the merge-base build turn the feature on
+for a package that declares it, in the head tree and in the base tree alike,
+so the comparison builds both sides the same way. A package that does not
+declare it builds exactly as before. The bench is registered like any other,
+so a change to the private function it runs moves that item and no other.</p>
+<p><code>covers</code> takes the crate-relative path. It is not a public item, so it does
+not count toward <code>coverage measure</code>'s denominator, and it is not warned about
+as long as its first module exists in the package's <code>src/</code> (a file, a
+directory with <code>mod.rs</code>, or an inline module in the crate root).</p>
 <h2 id="what-callgrind-s-counts-depend-on">What callgrind's counts depend on<a class="anchor" href="#what-callgrind-s-counts-depend-on" aria-label="Link to this section">#</a></h2>
 <p>callgrind counts are exact for a given binary, valgrind and libc, but not for
 a given binary alone. glibc picks its <code>memcpy</code>, <code>strlen</code> and <code>memchr</code> variants
@@ -329,6 +359,8 @@ that keeps every page on this site honest.</p>
   <ul class="toc-list" id="toc">
   
     <li><a class="toc-l2" href="#from-annotation-to-measurement">From annotation to measurement</a></li>
+  
+    <li><a class="toc-l2" href="#benches-inside-the-crate">Benches inside the crate</a></li>
   
     <li><a class="toc-l2" href="#what-callgrind-s-counts-depend-on">What callgrind&#39;s counts depend on</a></li>
   
