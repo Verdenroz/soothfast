@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Share test passes across linked worktrees (#493)
 - Certify unchanged test runs, cache doc tests (#492)
 
 
