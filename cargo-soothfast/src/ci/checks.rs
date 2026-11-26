@@ -116,26 +116,53 @@ fn collect(
 /// its job, caches and artifacts, `runs` the tokens `ci checks` takes, and
 /// `spec` the spec packages whose builds it stages. A group of spec checks
 /// whose packages share workspace crates is one entry, which falls back to
-/// the cache of its first member's own job through `legacy`.
-pub fn matrix<'a>(checks: impl Iterator<Item = &'a Check>, graph: Option<&Graph>) -> Value {
+/// the cache of its first member's own job through `legacy`; the other kinds
+/// share one. A check whose kind or record name is in `separate` keeps an
+/// entry of its own.
+pub fn matrix<'a>(
+    checks: impl Iterator<Item = &'a Check>,
+    graph: Option<&Graph>,
+    separate: &[String],
+) -> Value {
     let checks: Vec<&Check> = checks.collect();
+    let alone = |c: &Check| separate.iter().any(|s| s == c.kind || *s == c.name());
     let specs: Vec<&Check> = checks
         .iter()
         .copied()
-        .filter(|c| c.kind == "spec")
+        .filter(|c| c.kind == "spec" && !alone(c))
+        .collect();
+    let others: Vec<&Check> = checks
+        .iter()
+        .copied()
+        .filter(|c| c.kind != "spec" && !alone(c))
         .collect();
     let groups = spec_groups(&specs, graph);
     let include: Vec<Value> = checks
         .iter()
         .filter_map(|c| {
-            if c.kind != "spec" {
-                return Some(entry(c.name(), c.kind.to_string(), String::new(), &[c]));
+            if alone(c) {
+                return Some(single(c));
             }
-            let group = groups.iter().find(|g| std::ptr::eq(g[0], *c))?;
-            Some(spec_entry(group, groups.len() == 1))
+            if c.kind == "spec" {
+                let group = groups.iter().find(|g| std::ptr::eq(g[0], *c))?;
+                return Some(spec_entry(group, groups.len() == 1));
+            }
+            std::ptr::eq(others[0], *c).then(|| match others.as_slice() {
+                [only] => single(only),
+                _ => entry("checks".into(), "other".into(), String::new(), &others),
+            })
         })
         .collect();
     json!({ "include": include })
+}
+
+fn single(check: &Check) -> Value {
+    entry(
+        check.name(),
+        check.kind.to_string(),
+        String::new(),
+        &[check],
+    )
 }
 
 fn entry(slug: String, cache: String, legacy: String, members: &[&Check]) -> Value {
@@ -158,7 +185,7 @@ fn entry(slug: String, cache: String, legacy: String, members: &[&Check]) -> Val
 fn spec_entry(group: &[&Check], sole: bool) -> Value {
     let first = group[0];
     if group.len() == 1 {
-        return entry(first.name(), first.kind.to_string(), String::new(), group);
+        return single(first);
     }
     let slug = if sole {
         "spec-shared".to_string()
@@ -283,13 +310,39 @@ mod tests {
             ["spec-server", "coverage-core", "coverage-server", "site"]
         );
         assert_eq!(
-            matrix(checks.iter(), None)["include"][0],
+            matrix(checks.iter(), None, &[])["include"][0],
             json!({"slug": "spec-server", "runs": "spec:server", "spec": "server", "cache": "spec", "legacy": "", "rustdoc": true})
         );
         assert_eq!(
-            matrix(checks.iter(), None)["include"][3],
-            json!({"slug": "site", "runs": "site", "spec": "", "cache": "site", "legacy": "", "rustdoc": true})
+            matrix(checks.iter(), None, &[])["include"][1],
+            json!({"slug": "checks", "runs": "coverage:core coverage:server site", "spec": "", "cache": "other", "legacy": "", "rustdoc": true})
         );
+        assert_eq!(matrix(checks.iter(), None, &[])["include"][2], Value::Null);
+    }
+
+    #[test]
+    fn a_lone_small_check_keeps_its_own_entry() {
+        let checks = collect(true, &["coverage".into()], found, || Ok(true)).unwrap();
+        assert_eq!(
+            slugs(&matrix(checks.iter(), None, &[])),
+            ["spec-server", "site"]
+        );
+    }
+
+    #[test]
+    fn separate_names_a_kind_or_a_record_to_keep_apart() {
+        let checks = collect(true, &[], found, || Ok(true)).unwrap();
+        let by_kind = matrix(checks.iter(), None, &tokens(&["coverage", "spec"]));
+        assert_eq!(
+            slugs(&by_kind),
+            ["spec-server", "coverage-core", "coverage-server", "site"]
+        );
+        let by_record = matrix(checks.iter(), None, &tokens(&["coverage-core"]));
+        assert_eq!(
+            slugs(&by_record),
+            ["spec-server", "coverage-core", "checks"]
+        );
+        assert_eq!(by_record["include"][2]["runs"], "coverage:server site");
     }
 
     fn tokens(list: &[&str]) -> Vec<String> {
@@ -336,7 +389,7 @@ mod tests {
             ("lone", &[]),
         ]);
         let checks = [spec("api"), spec("admin")];
-        let m = matrix(checks.iter(), Some(&graph));
+        let m = matrix(checks.iter(), Some(&graph), &[]);
         assert_eq!(slugs(&m), ["spec-shared"]);
         let shared = &m["include"][0];
         assert_eq!(shared["runs"], "spec:api spec:admin");
@@ -354,7 +407,7 @@ mod tests {
             ("lone", &[]),
         ]);
         let checks = [spec("api"), spec("lone"), spec("admin")];
-        let m = matrix(checks.iter(), Some(&graph));
+        let m = matrix(checks.iter(), Some(&graph), &[]);
         assert_eq!(slugs(&m), ["spec-api-group", "spec-lone"]);
         assert_eq!(m["include"][0]["cache"], "spec-spec-api-group");
         assert_eq!(m["include"][1]["cache"], "spec");
@@ -363,7 +416,7 @@ mod tests {
     #[test]
     fn without_a_graph_every_spec_check_is_one_group() {
         let checks = [spec("a"), spec("b")];
-        assert_eq!(slugs(&matrix(checks.iter(), None)), ["spec-shared"]);
+        assert_eq!(slugs(&matrix(checks.iter(), None, &[])), ["spec-shared"]);
     }
 
     #[test]

@@ -170,6 +170,8 @@ struct Plan {
     /// Whether `[ci] site_run` hooks the site build, which then reads the
     /// spec jobs' builds.
     site_hook: bool,
+    /// `[ci] separate`: the checks that keep a job of their own.
+    separate: Vec<String>,
     /// The workspace graph, which says which spec checks share crates.
     graph: Option<Graph>,
     /// `[ci] trend_url`, which the docs job fetches the series from.
@@ -236,6 +238,7 @@ fn build(
     let pages = config.pages()?;
     let trend_url = config.trend_url()?;
     let site_hook = config.site_run()?.is_some();
+    let separate = config.separate()?;
     let checks = checks::planned(root, rust.is_some(), &skip)?;
     let graph = checks
         .iter()
@@ -262,6 +265,7 @@ fn build(
         checks,
         pages,
         site_hook,
+        separate,
         graph,
         trend_url,
         landing: false,
@@ -297,8 +301,6 @@ impl Plan {
             suites: Vec::new(),
             checks: Vec::new(),
             pages: false,
-            site_hook: false,
-            graph: None,
             landing: true,
             ..self
         }
@@ -372,7 +374,7 @@ impl Plan {
     }
 
     fn check_matrix<'a>(&self, checks: impl Iterator<Item = &'a Check>) -> Value {
-        checks::matrix(checks, self.graph.as_ref())
+        checks::matrix(checks, self.graph.as_ref(), &self.separate)
     }
 
     /// The checks the docs job waits for.
@@ -670,6 +672,7 @@ pub(in crate::plan) mod tests {
             checks: Vec::new(),
             pages: false,
             site_hook: false,
+            separate: Vec::new(),
             graph: None,
             trend_url: None,
             landing: false,
