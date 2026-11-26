@@ -175,7 +175,13 @@ coverage executed: 9/34 public item(s) measured
 `--tests` or `--benches` runs one column, and `--json` prints
 `{"package", "items": [{"path", "kind", "tested", "measured"}]}` with a
 column left out when it did not run. `--bench NAME` picks the bench target
-(default `soothfast`) and `--features` the feature set.
+(default `soothfast`).
+
+The two builds take separate feature sets. `--features` sets the surface and
+the test build; unset, it is what `coverage report` reads, the package's
+`docs` features and then its `gate` features. `--bench-features` sets the
+bench build; unset, it is the package's `gate` features, which a bench target
+with `required-features` needs to build at all.
 
 The denominator is the public functions, structs, enums, unions and traits of
 the package, plus inherent methods. Trait-impl methods are not items of their
