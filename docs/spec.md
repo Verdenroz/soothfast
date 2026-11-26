@@ -423,6 +423,23 @@ With it, `ci spec` fails on a finding. Run directly,
 `spec gate` and `spec check` exit 0 when clean, 1 on a finding and 2 when
 they could not run, whatever `enforce` says.
 
+## Checking the router
+
+A generated spec cannot disagree with its `#[route]` markers, but the markers
+are written by hand and can disagree with the router that serves requests.
+For a `mode = "generate"` OpenAPI file, `spec check` also reads the package's
+`src/` for `.route("/path", get(handler).post(other))` registrations and
+prints a `note:` line for each operation the router serves that the spec
+lacks, and each the spec declares that no registration serves. The notes are
+advisory and never change the exit code.
+
+Paths match by shape, so `{id}`, `:id` and `{symbol}` are one segment, and by
+suffix, because a `.nest("/v2", ..)` prefix is applied away from the
+registration. Code after a `#[cfg(test)]` marker is skipped. Only axum-style
+literal `.route(..)` calls are read; a package built on another framework, or
+one that registers no literal routes, gets a single note saying the check was
+skipped.
+
 ## Reconciliation
 
 <!-- soothfast:bind soothfast_spec::reconcile::reconcile -->

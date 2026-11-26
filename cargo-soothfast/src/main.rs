@@ -69,6 +69,7 @@ mod spec_gate;
 mod spec_gen;
 mod spec_html;
 mod spec_probe;
+mod spec_router;
 mod status;
 mod store;
 mod tagref;
