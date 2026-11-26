@@ -338,6 +338,17 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
+/// What lies outside `pkg`'s gate features, as the text and the JSON of
+/// `coverage features`.
+pub(crate) fn section(pkg: &str) -> Result<(String, Value), String> {
+    let gate = config::defaults(&[pkg.to_string()], Group::Gate)?.features;
+    let (outside, route) = measure(pkg, gate.as_deref())?;
+    Ok((
+        render_text(pkg, gate.as_deref(), &outside, route),
+        render_json(pkg, gate.as_deref(), &outside, route),
+    ))
+}
+
 /// How the reference surface was obtained.
 #[derive(Clone, Copy)]
 enum Route {

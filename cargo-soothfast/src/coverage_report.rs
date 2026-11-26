@@ -10,11 +10,13 @@ use soothfast_report::badges;
 
 use crate::config::{self, Group, Settings};
 use crate::coverage::{self, dangling_covers, declared_covers};
+use crate::coverage_features;
 use crate::coverage_lang;
 use crate::invoke::{self, Build, CommonArgs};
 use crate::{benchexe, docs, docs_support, workspace};
 
 mod executed;
+mod routes;
 use executed::{Provenance, Want};
 
 /// A public item and what covers it. `None` is a dimension the item's tree
@@ -29,6 +31,7 @@ struct Row {
     measured_declared: Option<bool>,
     measured: Option<bool>,
     gated: Option<bool>,
+    specified: Option<bool>,
     /// Where the executed columns came from.
     executed: Provenance,
     /// The item's claims were not read: no bench executable was listed, so
@@ -37,22 +40,19 @@ struct Row {
 }
 
 /// Every dimension a report carries: its JSON name and its label.
-pub(crate) const DIMENSIONS: [(&str, &str); 6] = [
+pub(crate) const DIMENSIONS: [(&str, &str); 7] = [
     ("documented", "documented"),
     ("documented_strict", "documented+"),
     ("tested", "tested"),
     ("measured_declared", "measured (declared)"),
     ("measured", "measured"),
     ("gated", "gated"),
+    ("specified", "specified"),
 ];
-
-/// Dimensions other commands compute, named so a minimum for one parses
-/// before its values reach a report.
-const PENDING: [&str; 1] = ["specified"];
 
 /// Whether `name` is a dimension a minimum may be set on.
 pub(crate) fn is_dimension(name: &str) -> bool {
-    DIMENSIONS.iter().any(|(d, _)| *d == name) || PENDING.contains(&name)
+    DIMENSIONS.iter().any(|(d, _)| *d == name)
 }
 
 impl Row {
@@ -63,7 +63,8 @@ impl Row {
             "tested" => self.tested,
             "measured_declared" => self.measured_declared,
             "measured" => self.measured,
-            _ => self.gated,
+            "gated" => self.gated,
+            _ => self.specified,
         }
     }
 }
@@ -98,12 +99,28 @@ pub fn run(args: &[String]) -> i32 {
     }
     match rows(&pkgs, &dirs, lang.as_deref(), features, check, executed) {
         Ok(rows) => {
+            let outside = match check {
+                true => Ok(Vec::new()),
+                false => pkgs.iter().map(|p| coverage_features::section(p)).collect(),
+            };
+            let outside: Vec<(String, Value)> = match outside {
+                Ok(outside) => outside,
+                Err(e) => {
+                    eprintln!("soothfast: {e}");
+                    return 1;
+                }
+            };
             if json {
-                println!("{:#}", render_json(&rows));
+                let mut doc = render_json(&rows);
+                doc["features"] = outside.into_iter().map(|(_, json)| json).collect();
+                println!("{doc:#}");
             } else if check {
                 print!("{}", render_summary(&rows));
             } else {
                 print!("{}", render_text(&rows));
+                for (text, _) in outside {
+                    print!("\n{text}");
+                }
             }
             if check {
                 held_to_minimums(&rows, &pkgs)
@@ -208,9 +225,6 @@ fn held_to_minimums(rows: &[Row], pkgs: &[String]) -> i32 {
             })
         })
         .collect();
-    for name in PENDING.iter().filter(|n| settings.minimum(n).is_some()) {
-        eprintln!("coverage: a minimum is set on {name}, which no command computes yet");
-    }
     for f in figures.iter().filter(|f| f.short()) {
         println!(
             "coverage: {} is {}%, below the minimum {}%",
@@ -259,41 +273,54 @@ fn rows(
         let min_set = check && needs_executed(pkg).map_err(|e| (2, e))?;
         let want = executed_want(check, executed, min_set);
         let columns = executed::gather(pkg, &surf, &root, &build, want).map_err(|e| (1, e))?;
+        let handlers = match may_build {
+            true => {
+                let spec = bench_args(pkg, features.clone(), Group::Spec).map_err(|e| (1, e))?;
+                Some(routes::handlers(pkg, &spec).map_err(|e| (1, e))?)
+            }
+            false => None,
+        };
+        let decorate = |rows: Vec<Row>| {
+            let rows = executed::attach(rows, &columns);
+            match &handlers {
+                Some(handlers) => routes::attach(rows, &surf, handlers),
+                None => rows,
+            }
+        };
         let records = discover(&build, may_build).map_err(|e| (1, e))?;
         let Some(records) = records else {
             eprintln!(
                 "{pkg}: no built bench executable; measured (declared) and gated are n/a and documented+ counts binds only"
             );
-            rows.extend(executed::attach(
-                rust_rows(&surf, None, &marked.items(&[]), None),
-                &columns,
-            ));
+            rows.extend(decorate(rust_rows(&surf, None, &marked.items(&[]), None)));
             continue;
         };
         for warning in dangling_covers(&records, &surf, pkg) {
             eprintln!("{warning}");
         }
         let gate_records = gate_discovery(pkg, &build, &records, may_build).map_err(|e| (1, e))?;
-        rows.extend(executed::attach(
-            rust_rows(
-                &surf,
-                Some(&declared_covers(&records)),
-                &marked.items(&records),
-                gate_records.as_deref().map(declared_covers).as_ref(),
-            ),
-            &columns,
-        ));
+        rows.extend(decorate(rust_rows(
+            &surf,
+            Some(&declared_covers(&records)),
+            &marked.items(&records),
+            gate_records.as_deref().map(declared_covers).as_ref(),
+        )));
     }
     Ok(rows)
 }
 
-/// Whether `pkg` has a minimum on a dimension its bench target's claims and
-/// declarations decide.
+/// Whether `pkg` has a minimum on a dimension its bench target's claims,
+/// declarations and routes decide.
 fn needs_bench(pkg: &str) -> Result<bool, String> {
     let minimums = config::coverage_defaults(&[pkg.to_string()])?;
-    Ok(["documented_strict", "measured_declared", "gated"]
-        .iter()
-        .any(|d| minimums.minimum(d).is_some()))
+    Ok([
+        "documented_strict",
+        "measured_declared",
+        "gated",
+        "specified",
+    ]
+    .iter()
+    .any(|d| minimums.minimum(d).is_some()))
 }
 
 /// A `--check` runs the instrumented build only for a package with a minimum
@@ -528,6 +555,7 @@ fn render_json(rows: &[Row]) -> Value {
                 "measured_declared": r.measured_declared,
                 "measured": r.measured,
                 "gated": r.gated,
+                "specified": r.specified,
             })
         })
         .collect();
