@@ -669,6 +669,15 @@ the command line left unset. The action passes no features of its own, so a
 repository that configures the file gets one behaviour from a hand-run
 `cargo soothfast gate` and from the action.
 
+Changing the feature set changes what gets linked, and under fat LTO the code
+of unchanged functions can compile differently once a large dependency is in
+the build, moving counts a few percent with no source change. When `gate
+--against-ref` fails and the merge-base's `soothfast.toml` resolves different
+`[gate]` features than the flags in use, the console and every triage report
+open with `feature set changed between base and head (<base> -> <head>):
+codegen of unchanged code can shift under LTO`. The note explains a shift; it
+waives nothing.
+
 ## Per-package defaults
 
 A repository with several packages, or one package that builds with
