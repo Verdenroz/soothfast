@@ -5,7 +5,9 @@
 //! The runner always exits 0 on a completed run; assertion verdicts travel
 //! as records and the CLI decides the exit code.
 
-use soothfast_registry::{Bencher, MeasuredItem, fixture_items, measured_items, route_items};
+use soothfast_registry::{
+    Assertions, Bencher, MeasuredItem, fixture_items, measured_items, route_items,
+};
 
 use std::cell::Cell;
 
@@ -403,7 +405,13 @@ pub fn main() {
             if args.json {
                 println!(
                     "{}",
-                    item_json(&e.id, e.item.group, e.fingerprint, e.item.covers)
+                    item_json(
+                        &e.id,
+                        e.item.group,
+                        e.fingerprint,
+                        e.item.covers,
+                        &e.item.assertions
+                    )
                 );
             } else {
                 println!("{} [{}]", e.id, e.item.group);
@@ -561,14 +569,38 @@ pub fn main() {
     }
 }
 
-fn item_json(id: &str, group: &str, fingerprint: u64, covers: &str) -> String {
+fn item_json(
+    id: &str,
+    group: &str,
+    fingerprint: u64,
+    covers: &str,
+    assertions: &Assertions,
+) -> String {
     format!(
-        "{{\"type\":\"item\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"}}",
+        "{{\"type\":\"item\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"{}}}",
         esc(id),
         esc(group),
         fingerprint,
         esc(covers),
+        assertions_field(assertions),
     )
+}
+
+fn assertions_field(a: &Assertions) -> String {
+    let mut declared = Vec::new();
+    if let Some(n) = a.max_allocs {
+        declared.push(format!("\"max_allocs\":{n}"));
+    }
+    if let Some(ns) = a.p99_ns {
+        declared.push(format!("\"p99_ns\":{ns}"));
+    }
+    if let Some(class) = a.complexity {
+        declared.push(format!("\"complexity\":\"{}\"", esc(class)));
+    }
+    if declared.is_empty() {
+        return String::new();
+    }
+    format!(",\"assertions\":{{{}}}", declared.join(","))
 }
 
 fn calibration_json(noise_pct: f64) -> String {
@@ -1090,6 +1122,24 @@ mod tests {
     }
 
     #[test]
+    fn an_item_record_carries_only_the_assertions_it_declares() {
+        let bare = item_json("a", "g", 1, "", &Assertions::new(None, None, None));
+        assert!(!bare.contains("assertions"), "{bare}");
+        let claimed = item_json(
+            "a",
+            "g",
+            1,
+            "",
+            &Assertions::new(Some(0), Some(5), Some("n")),
+        );
+        assert!(
+            claimed
+                .ends_with(",\"assertions\":{\"max_allocs\":0,\"p99_ns\":5,\"complexity\":\"n\"}}"),
+            "{claimed}"
+        );
+    }
+
+    #[test]
     fn identity_fields_are_escaped() {
         let item = RouteItem::new("a\"b", "s", "op", "GET", "/x");
         assert!(route_json(&item).contains("a\\\"b"));
@@ -1132,7 +1182,13 @@ mod tests {
         let lines = [
             env_line(&env(None), true),
             env_line(&env(Some(guest())), true),
-            item_json("app::decode", "self", 0xff, "app::decode"),
+            item_json(
+                "app::decode",
+                "self",
+                0xff,
+                "app::decode",
+                &Assertions::new(Some(2), Some(1_000_000), Some("n")),
+            ),
             calibration_json(1.25),
             result(
                 Some(7.5),

@@ -31,7 +31,16 @@
         "id": { "description": "Item id, `package::module::function`.", "type": "string" },
         "group": { "description": "Group named by `group = ...`; ignored by readers.", "type": "string" },
         "fingerprint": { "description": "Hex FNV-1a fingerprint of the item's token stream, as a string.", "type": "string" },
-        "covers": { "description": "Public item the benchmark covers; empty when unset.", "type": "string" }
+        "covers": { "description": "Public item the benchmark covers; empty when unset.", "type": "string" },
+        "assertions": {
+          "description": "Checked claims the item declares; absent when it declares none. Only the declared keys appear.",
+          "type": "object",
+          "properties": {
+            "max_allocs": { "description": "`alloc = N`: most allocations per iteration.", "type": "integer" },
+            "p99_ns": { "description": "`p99 = \"...\"`: tail-latency bound in ns.", "type": "integer" },
+            "complexity": { "description": "`complexity = \"...\"`: claimed class.", "type": "string" }
+          }
+        }
       }
     },
     {

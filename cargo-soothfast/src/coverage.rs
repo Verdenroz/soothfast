@@ -200,12 +200,26 @@ pub(crate) fn declared_covers(records: &[Value]) -> BTreeSet<String> {
     records
         .iter()
         .filter(|r| r["type"] == "item")
-        .filter_map(|r| {
-            let covers = r["covers"].as_str().unwrap_or("");
-            let id = r["id"].as_str()?;
-            Some(if covers.is_empty() { id } else { covers }.to_string())
-        })
+        .filter_map(measured_path)
         .collect()
+}
+
+/// The paths of the registry's items that carry a checked claim
+/// (`alloc`, `p99` or `complexity`). A harness that lists no assertions
+/// yields none.
+pub(crate) fn asserted_covers(records: &[Value]) -> BTreeSet<String> {
+    records
+        .iter()
+        .filter(|r| r["type"] == "item")
+        .filter(|r| r["assertions"].as_object().is_some_and(|a| !a.is_empty()))
+        .filter_map(measured_path)
+        .collect()
+}
+
+fn measured_path(record: &Value) -> Option<String> {
+    let covers = record["covers"].as_str().unwrap_or("");
+    let id = record["id"].as_str()?;
+    Some(if covers.is_empty() { id } else { covers }.to_string())
 }
 
 /// A warning per bench whose `covers` names no item or method of `surf`.
@@ -293,7 +307,7 @@ mod tests {
     use serde_json::json;
     use soothfast_docs::surface::{ItemInfo, Surface};
 
-    use super::{dangling_covers, pct, write_badge};
+    use super::{asserted_covers, dangling_covers, pct, write_badge};
 
     fn surface() -> Surface {
         let info = |kind: &str| ItemInfo {
@@ -324,6 +338,20 @@ mod tests {
                 "warning: bench demo::bench_old covers demo::gone, which is not a public item of demo"
             ]
         );
+    }
+
+    #[test]
+    fn only_items_with_assertions_are_asserted_and_older_harnesses_list_none() {
+        let records = [
+            json!({ "type": "item", "id": "demo::bench_run", "covers": "demo::run",
+                "assertions": { "max_allocs": 0 } }),
+            json!({ "type": "item", "id": "demo::bench_self", "covers": "",
+                "assertions": { "complexity": "n" } }),
+            json!({ "type": "item", "id": "demo::bench_go", "covers": "demo::Thing::go" }),
+        ];
+        let got: Vec<_> = asserted_covers(&records).into_iter().collect();
+        assert_eq!(got, ["demo::bench_self", "demo::run"]);
+        assert!(asserted_covers(&records[2..]).is_empty());
     }
 
     #[test]
