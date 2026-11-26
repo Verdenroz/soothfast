@@ -175,12 +175,9 @@ impl Markers {
     /// The items markers cover: bound ones, and what a claimed bench `covers`
     /// (its own id where that is empty).
     fn items(&self, records: &[Value]) -> BTreeSet<String> {
-        let claimed = records
-            .iter()
-            .filter(|r| r["type"] == "item")
-            .filter_map(|r| Some((r["id"].as_str()?, r["covers"].as_str()?)))
+        let claimed = coverage::benches(records)
             .filter(|(id, _)| self.claimed.contains(*id))
-            .map(|(id, covers)| if covers.is_empty() { id } else { covers });
+            .map(|(id, covers)| coverage::measured_path(id, covers));
         self.binds
             .iter()
             .map(String::as_str)
