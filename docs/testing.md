@@ -173,14 +173,66 @@ the summary names `doc tests` only if cargo's output reports a failed doc
 test. Otherwise, if every binary passed, it reports `cargo test (exit N)`
 and prints the end of cargo's output.
 
-Doc tests cannot be cached. They run at the end of the same invocation for
-each selected package whose library has doc tests enabled. Pass `--no-doc`
-to skip them: cargo then runs a rustdoc wrapper that skips the selected
-packages' doc tests, so the build and the run keep the same targets and the
-same keys. Any other rustdoc call, such as a test that builds a generated
-crate's doc tests, passes through to the real rustdoc. A target flag such as
-`--lib` or `--test NAME` skips doc tests too. `--doc` itself is refused,
-since doc tests always run.
+Doc tests run at the end of the same invocation for each selected package
+whose library has doc tests enabled, unless the package has a stored doc-test
+pass (see below). Pass `--no-doc` to skip them all: cargo then runs a rustdoc
+wrapper that skips the selected packages' doc tests, so the build and the run
+keep the same targets and the same keys. Any other rustdoc call, such as a
+test that builds a generated crate's doc tests, passes through to the real
+rustdoc. A target flag such as `--lib` or `--test NAME` skips doc tests too.
+`--doc` itself is refused, since doc tests always run.
+
+### Doc-test passes
+
+Each package's doc tests have their own stored pass, so rustdoc does not
+recompile every doctest on each run. The key covers:
+
+- the files of the package and of every workspace package it depends on,
+  transitively;
+- the files that select every package, `Cargo.lock` and the other inputs
+  listed under the run certificate below;
+- the cargo flags, including the package defaults' features, and the
+  arguments after `--`;
+- the values of the `[test] env` variables.
+
+A pass is stored when the doc tests passed and the package's inputs are
+unchanged after the run. Packages with a pass are skipped through the same
+rustdoc wrapper as `--no-doc`, and the summary counts them as
+`(N cached)`. The key has the same blind spots as the binaries' key.
+
+### The run certificate
+
+Before building, `cargo soothfast test` looks for a certificate: proof that a
+run with these exact inputs finished with every binary and every doc test
+passing. A match prints `answered from a stored pass`, records the run for
+`status`, writes the verdict `reused` for `--result` and exits 0 without
+building or running anything. Only the `cargo metadata` and version queries
+that compute the key still run.
+
+A certificate is stored only after a run with no failures and no flaky
+binaries. A `--no-run` run stores none, and `--no-cache` neither reads nor
+stores one. A run that changed its own inputs stores none either. The key
+covers:
+
+- the tree snapshot: `HEAD`'s tree plus a digest of the uncommitted changes
+  and of the contents of untracked files;
+- `Cargo.lock`;
+- every `.cargo/config` and `.cargo/config.toml` from the workspace root up to
+  `/`, `$CARGO_HOME/config.toml` and `rust-toolchain(.toml)`;
+- `rustc -vV`, `cargo -V` and `rustdoc -vV`;
+- every environment variable whose name starts with `CARGO_`, `RUSTFLAGS`,
+  `RUSTC` or `RUSTDOC`, except `CARGO_MAKEFLAGS`, which differs on every
+  invocation under make;
+- the values of the `[test] env` variables;
+- the cargo flags and the arguments after `--`, including `--no-doc`;
+- the selected packages.
+
+It does not cover files git ignores, anything a test reads outside the repo,
+the network and the clock. A path dependency or `[patch]` that resolves
+outside the repo root is not in the snapshot, so the command says so once and
+uses neither a certificate nor a doc-test pass for that run. Certificates and
+doc-test passes live in `.soothfast/tests` next to the binaries' passes and
+are pruned with them.
 
 ### A runner you configured
 

@@ -28,7 +28,7 @@ pub struct Plan {
     pub runner: Vec<String>,
     /// Keyed executables, by the path cargo reported for them.
     pub entries: BTreeMap<PathBuf, Entry>,
-    /// Set under `--no-doc`: whose doc tests the rustdoc wrapper skips.
+    /// Set when some doc tests are skipped, under `--no-doc` or a stored pass.
     pub doc_skip: Option<DocSkip>,
 }
 
@@ -39,14 +39,17 @@ pub struct Entry {
     pub cached: bool,
 }
 
-/// The doc tests `--no-doc` skips: the selected packages' library crates,
-/// built from sources under the workspace root.
+/// The doc tests skipped, under `--no-doc` or a stored pass: the library
+/// crates of the packages concerned, built from sources under the workspace
+/// root.
 #[derive(Debug, PartialEq)]
 pub struct DocSkip {
     /// `RUSTDOC` before the run step replaced it.
     pub original: Option<String>,
     pub crates: Vec<String>,
     pub root: PathBuf,
+    /// What the skip line names as the cause.
+    pub reason: String,
 }
 
 impl Plan {
@@ -62,7 +65,7 @@ impl Plan {
         let doc_skip = self
             .doc_skip
             .as_ref()
-            .map(|d| json!({ "original": d.original, "crates": d.crates, "root": d.root }));
+            .map(|d| json!({ "original": d.original, "crates": d.crates, "root": d.root, "reason": d.reason }));
         let plan = json!({
             "results": self.results,
             "runner": self.runner,
@@ -88,6 +91,7 @@ impl Plan {
                 original: d["original"].as_str().map(String::from),
                 crates: strings(&d["crates"]).ok_or_else(malformed)?,
                 root: PathBuf::from(d["root"].as_str().ok_or_else(malformed)?),
+                reason: d["reason"].as_str().ok_or_else(malformed)?.to_string(),
             }),
         };
         let entries = v["entries"]
@@ -246,6 +250,7 @@ mod tests {
             original: Some("/opt/rustdoc".into()),
             crates: argv(&["a", "b_c"]),
             root: PathBuf::from("/ws"),
+            reason: "--no-doc".into(),
         });
         let file = dir.0.join("plan.json");
         written.write(&file).unwrap();

@@ -69,14 +69,10 @@ impl Keyer {
     /// The pass cache key for `bin`, or `None` when its code or a sibling's
     /// cannot be digested.
     pub fn key(&mut self, bin: &TestBin) -> Result<Option<String>, String> {
-        let Some(pkg) = self.pkgs.iter().find(|p| p.name == bin.package) else {
+        if !self.pkgs.iter().any(|p| p.name == bin.package) {
             return Ok(None);
-        };
-        if !self.files.contains_key(&bin.package) {
-            let files = package_inputs(&self.root, &self.pkgs, &self.cfg, pkg)
-                .map_err(|e| e.to_string())?;
-            self.files.insert(bin.package.clone(), files);
         }
+        self.digest_files(&bin.package)?;
         if !self.sibling_sets.contains_key(&bin.package) {
             let siblings = self.siblings_digest(&bin.package);
             self.sibling_sets.insert(bin.package.clone(), siblings);
@@ -98,6 +94,52 @@ impl Keyer {
             env: &self.env,
             rustc: &self.rustc,
         })))
+    }
+
+    /// The doc-test pass key for `package`: its files and those of every
+    /// workspace package it depends on, under the workspace inputs and the
+    /// run's `environment` digest. The doc tests build against all of them.
+    pub fn doc_key(
+        &mut self,
+        package: &str,
+        environment: &str,
+        cargo_args: &[String],
+    ) -> Result<String, String> {
+        let mut members = Vec::new();
+        for name in select::with_dependencies(&self.pkgs, package) {
+            self.digest_files(&name)?;
+            members.push(format!("{name}\u{0}{}", self.files[&name]));
+        }
+        Ok(doc_key_of(DocParts {
+            package,
+            members: &members,
+            workspace: &self.workspace,
+            environment,
+            cargo_args,
+            run_args: &self.run_args,
+            env: &self.env,
+        }))
+    }
+
+    /// Digest the workspace and every package's files afresh, to tell
+    /// whether a run changed its own inputs.
+    pub fn refresh(&mut self) -> Result<(), String> {
+        self.workspace =
+            workspace_inputs(&self.root, &self.pkgs, &self.cfg).map_err(|e| e.to_string())?;
+        self.files.clear();
+        Ok(())
+    }
+
+    fn digest_files(&mut self, package: &str) -> Result<(), String> {
+        let Some(pkg) = self.pkgs.iter().find(|p| p.name == package) else {
+            return Ok(());
+        };
+        if !self.files.contains_key(package) {
+            let files = package_inputs(&self.root, &self.pkgs, &self.cfg, pkg)
+                .map_err(|e| e.to_string())?;
+            self.files.insert(package.to_string(), files);
+        }
+        Ok(())
     }
 
     /// `bin`'s key with the workspace and its package's files digested
@@ -134,7 +176,7 @@ impl Keyer {
 }
 
 /// The current value of each named variable, empty when unset.
-fn env_values(names: &[String]) -> Vec<(String, String)> {
+pub(super) fn env_values(names: &[String]) -> Vec<(String, String)> {
     names
         .iter()
         .map(|n| (n.clone(), std::env::var(n).unwrap_or_default()))
@@ -168,6 +210,33 @@ fn key_of(p: KeyParts) -> String {
         env.join("\u{2}"),
         p.rustc.into(),
     ])
+}
+
+struct DocParts<'a> {
+    package: &'a str,
+    members: &'a [String],
+    workspace: &'a str,
+    environment: &'a str,
+    cargo_args: &'a [String],
+    run_args: &'a [String],
+    env: &'a [(String, String)],
+}
+
+fn doc_key_of(p: DocParts) -> String {
+    let env: Vec<String> = p.env.iter().map(|(n, v)| format!("{n}={v}")).collect();
+    format!(
+        "doc-{}",
+        hashed(&[
+            "soothfast-test-doc-v1".into(),
+            p.package.into(),
+            p.members.join("\u{2}"),
+            p.workspace.into(),
+            p.environment.into(),
+            p.cargo_args.join("\u{2}"),
+            p.run_args.join("\u{2}"),
+            env.join("\u{2}"),
+        ])
+    )
 }
 
 fn fold_siblings(mut digests: Vec<(String, String)>) -> String {
@@ -246,7 +315,7 @@ pub(super) fn file_ids(
 }
 
 /// The blob ids git computes for worktree files, a batch per call.
-fn blob_ids(root: &Path, paths: &[String]) -> io::Result<Vec<(String, String)>> {
+pub(super) fn blob_ids(root: &Path, paths: &[String]) -> io::Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     for chunk in paths.chunks(256) {
         let mut args = vec!["hash-object", "--"];
@@ -360,6 +429,52 @@ mod tests {
         ];
         for k in moved {
             assert_ne!(key_of(k), base());
+        }
+    }
+
+    #[test]
+    fn each_doc_input_moves_the_doc_key() {
+        const BASE: DocParts = DocParts {
+            package: "p",
+            members: &[],
+            workspace: "wide",
+            environment: "env",
+            cargo_args: &[],
+            run_args: &[],
+            env: &[],
+        };
+        let one = vec!["x".to_string()];
+        let env = vec![("A".to_string(), "b".to_string())];
+        let moved = [
+            DocParts {
+                package: "q",
+                ..BASE
+            },
+            DocParts {
+                members: &one,
+                ..BASE
+            },
+            DocParts {
+                workspace: "wide2",
+                ..BASE
+            },
+            DocParts {
+                environment: "env2",
+                ..BASE
+            },
+            DocParts {
+                cargo_args: &one,
+                ..BASE
+            },
+            DocParts {
+                run_args: &one,
+                ..BASE
+            },
+            DocParts { env: &env, ..BASE },
+        ];
+        let original = doc_key_of(BASE);
+        for parts in moved {
+            assert_ne!(doc_key_of(parts), original);
         }
     }
 
