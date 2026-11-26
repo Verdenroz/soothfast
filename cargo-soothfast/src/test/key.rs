@@ -246,7 +246,7 @@ pub(super) fn file_ids(
 }
 
 /// The blob ids git computes for worktree files, a batch per call.
-fn blob_ids(root: &Path, paths: &[String]) -> io::Result<Vec<(String, String)>> {
+pub(super) fn blob_ids(root: &Path, paths: &[String]) -> io::Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     for chunk in paths.chunks(256) {
         let mut args = vec!["hash-object", "--"];
