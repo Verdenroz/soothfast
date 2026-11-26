@@ -19,6 +19,7 @@ mod ci;
 mod codekey;
 mod config;
 mod coverage;
+mod coverage_features;
 mod coverage_lang;
 mod cpu;
 mod docs;

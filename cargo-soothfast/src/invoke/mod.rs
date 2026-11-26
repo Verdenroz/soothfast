@@ -41,7 +41,7 @@ pub use run::{
 };
 pub(crate) use rustdoc::{RUSTDOC_FORMAT_VERSION, crate_dirs};
 pub use rustdoc::{
-    Visibility, dependency_features, rustdoc_build, rustdoc_holds, rustdoc_json_exactly,
+    Visibility, dependency_features, rustdoc_build, rustdoc_holds, rustdoc_json_all, rustdoc_json_exactly,
     rustdoc_json_in, rustdoc_key,
 };
 pub use worktree::{
