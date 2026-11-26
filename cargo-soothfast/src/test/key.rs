@@ -332,11 +332,16 @@ pub struct Passes {
 }
 
 impl Passes {
-    /// `.soothfast/tests`, created on demand.
+    /// `.soothfast/tests`, created on demand. A linked worktree shares its
+    /// main worktree's store, since keys are content hashes.
     pub fn open() -> Option<Passes> {
-        Some(Passes {
-            dir: runcache::state_dir("tests")?,
-        })
+        Passes::open_in(&invoke::project_root())
+    }
+
+    fn open_in(root: &Path) -> Option<Passes> {
+        let dir = store_root(root).join(".soothfast").join("tests");
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(Passes { dir })
     }
 
     #[cfg(test)]
@@ -362,9 +367,33 @@ impl Passes {
     /// Best effort: a pass that cannot be written costs a re-run, nothing
     /// else.
     pub fn record(&self, label: &str, key: &str) {
-        if std::fs::write(self.dir.join(key), label).is_ok() {
+        let tmp = self.dir.join(format!(".{key}.{}.tmp", std::process::id()));
+        let stored =
+            std::fs::write(&tmp, label).and_then(|()| std::fs::rename(&tmp, self.dir.join(key)));
+        if stored.is_ok() {
             runcache::prune_oldest(&self.dir, KEEP);
+        } else {
+            let _ = std::fs::remove_file(&tmp);
         }
+    }
+}
+
+/// The working tree whose `.soothfast` holds the passes: the main worktree
+/// when `root` is a linked one, else `root`.
+fn store_root(root: &Path) -> PathBuf {
+    let rev = |flag| {
+        invoke::git_in(root, &["rev-parse", "--path-format=absolute", flag])
+            .ok()
+            .map(PathBuf::from)
+    };
+    let (Some(git_dir), Some(common)) = (rev("--git-dir"), rev("--git-common-dir")) else {
+        return root.to_path_buf();
+    };
+    match common.parent() {
+        Some(main) if git_dir != common && common.file_name().is_some_and(|n| n == ".git") => {
+            main.to_path_buf()
+        }
+        _ => root.to_path_buf(),
     }
 }
 
@@ -522,6 +551,34 @@ mod tests {
             got,
             [("SOOTHFAST_SURELY_UNSET_VAR".to_string(), String::new())]
         );
+    }
+
+    #[test]
+    fn a_linked_worktree_opens_the_main_worktrees_store() {
+        let repo = TempRepo::new("sharedpasses");
+        repo.write("a", "a");
+        repo.git(&["add", "."]);
+        repo.commit();
+        let linked = repo.root.with_extension("linked");
+        repo.git(&["worktree", "add", "-q", linked.to_str().unwrap()]);
+        let main = Passes::open_in(&repo.root).unwrap();
+        let shared = Passes::open_in(&linked).unwrap();
+        let _ = std::fs::remove_dir_all(&linked);
+        assert_eq!(shared.dir, main.dir);
+        assert_eq!(
+            main.dir.canonicalize().unwrap(),
+            repo.root.canonicalize().unwrap().join(".soothfast/tests")
+        );
+    }
+
+    #[test]
+    fn a_recorded_pass_is_found_and_leaves_no_temp_file() {
+        let repo = TempRepo::new("passrecord");
+        let passes = Passes::open_in(&repo.root).unwrap();
+        assert!(!passes.has("k"));
+        passes.record("label", "k");
+        assert!(passes.has("k"));
+        assert_eq!(std::fs::read_dir(&passes.dir).unwrap().count(), 1);
     }
 
     #[test]
