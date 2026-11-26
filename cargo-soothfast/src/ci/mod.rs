@@ -86,6 +86,11 @@ const KINDS: &[Kind] = &[
         applies: in_a_run,
     },
     Kind {
+        name: "checks",
+        run: Some(checks::run),
+        applies: |_| false,
+    },
+    Kind {
         name: "lanes",
         run: Some(lanes::run),
         applies: |_| false,
@@ -250,6 +255,7 @@ mod tests {
                 "coverage",
                 "capture",
                 "site",
+                "checks",
                 "lanes",
                 "verdict",
                 "regen"
