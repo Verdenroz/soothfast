@@ -28,6 +28,7 @@ mod docs;
 mod docs_binds;
 mod docs_claims;
 mod docs_generated;
+mod docs_stats;
 mod docs_support;
 mod every_package;
 mod gate;

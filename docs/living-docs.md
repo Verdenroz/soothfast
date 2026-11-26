@@ -300,6 +300,25 @@ left, is dropped. To move a page to another package, delete its generated
 files and run gen-tests for both. A run without paths covers exactly the
 default scope.
 
+## Which blocks run
+
+A block that compiles is not a block that executes. `cargo soothfast docs
+stats [PATH ...] [--json]` reads the scanned pages and prints, for each, the
+rust blocks gen-tests turns into a running test (`executed`), the ones that
+only compile (`compile-only`: `no_run`, and `ignore`, `compile_fail` and the
+other rustdoc attributes, which gen-tests does not generate at all), and the
+page's `bind` and `claim` marker counts. A page with neither marker is
+flagged, since nothing ties its prose to code or a measurement. Capture
+blocks run in the capture example, so they are in neither count. The report
+is advisory and fails nothing.
+
+```console
+$ cargo soothfast docs stats
+docs/measuring.md: 4 executed, 2 compile-only, 6 bind(s), 3 claim(s)
+docs/ci.md: 0 executed, 5 compile-only, 0 bind(s), 0 claim(s)  no bind or claim
+docs stats: 4 of 11 doc block(s) execute; 1 of 2 page(s) have no bind or claim
+```
+
 ## Why this page has almost no `ignore`d code
 
 Every rust block on this site either runs for real, with `capture-output`

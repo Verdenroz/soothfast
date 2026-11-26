@@ -1,4 +1,4 @@
-//! `cargo soothfast docs <check|accept|gen-tests|capture|diff|reference>` —
+//! `cargo soothfast docs <check|accept|gen-tests|capture|diff|reference|stats>` —
 //! the docs-engine commands, driving `soothfast-docs`.
 
 use std::collections::BTreeSet;
@@ -9,7 +9,8 @@ use soothfast_docs::{diff, gentests, lockfile, markdown, reference, surface};
 
 use crate::config::{Config, Group, Settings};
 use crate::{
-    buildstamp, config, docs_binds, docs_claims, docs_generated, docs_support, glob, invoke,
+    buildstamp, config, docs_binds, docs_claims, docs_generated, docs_stats, docs_support, glob,
+    invoke,
 };
 
 #[derive(Default)]
@@ -41,6 +42,8 @@ struct DocsArgs {
     /// The markdown scope when no PATHS are given. `None` reads `[docs] paths`
     /// from the scanned root.
     scope: Option<Vec<String>>,
+    /// `docs stats` prints JSON.
+    json: bool,
 }
 
 impl DocsArgs {
@@ -93,7 +96,7 @@ fn takes_package(sub: &str) -> bool {
 pub fn run(args: &[String]) -> i32 {
     let Some(sub) = args.first().cloned() else {
         eprintln!(
-            "soothfast: usage: cargo soothfast docs check|accept|gen-tests|capture|diff|reference|routes|build|serve|gh-deploy"
+            "soothfast: usage: cargo soothfast docs check|accept|gen-tests|capture|diff|reference|routes|stats|build|serve|gh-deploy"
         );
         return 2;
     };
@@ -114,6 +117,7 @@ pub fn run(args: &[String]) -> i32 {
         message: None,
         paths: Vec::new(),
         scope: None,
+        json: false,
     };
     let mut baseline_given = false;
     let mut it = args[1..].iter();
@@ -133,6 +137,7 @@ pub fn run(args: &[String]) -> i32 {
             "--against-ref" => a.against_ref = it.next().cloned(),
             "--out" => a.out = it.next().map(PathBuf::from),
             "--check" => a.check_only = true,
+            "--json" => a.json = true,
             "--skip-claims" => a.skip_claims = true,
             "--allow-gone" => a.allow_gone = true,
             "--features" => a.features = it.next().cloned(),
@@ -183,6 +188,7 @@ pub fn run(args: &[String]) -> i32 {
         "gen-tests" => gen_tests(&a),
         "capture" => capture(&a),
         "diff" => surface_diff(&a),
+        "stats" => stats(&a),
         "reference" => reference_cmd(&a),
         // Reject args other subcommands take: silently ignoring `-p` or
         // PATHS would mask a misunderstanding of what `build` builds.
@@ -685,6 +691,20 @@ fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
         }
         Err(e) => err(&format!("cannot write lockfile: {e}")),
     }
+}
+
+fn stats(a: &DocsArgs) -> i32 {
+    let scanned = match scan_all(a) {
+        Ok(s) => s,
+        Err(e) => return err(&e),
+    };
+    let pages: Vec<_> = scanned
+        .docs
+        .iter()
+        .map(|(file, doc, _)| (file.as_str(), gentests::page_counts(doc)))
+        .collect();
+    print!("{}", docs_stats::render(&pages, a.json));
+    0
 }
 
 fn gen_tests(a: &DocsArgs) -> i32 {
