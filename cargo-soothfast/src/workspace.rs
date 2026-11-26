@@ -166,6 +166,39 @@ pub(crate) fn bench_target_in(meta: &Value, pkg: &str, target: &str) -> bool {
         })
 }
 
+/// Whether `pkg` declares the cargo feature `feature`, in `meta`.
+pub(crate) fn declares_feature_in(meta: &Value, pkg: &str, feature: &str) -> bool {
+    meta["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p["name"].as_str() == Some(pkg))
+        .any(|p| p["features"].get(feature).is_some())
+}
+
+/// [`declares_feature_in`] for the tree at `dir`. Read once per process and
+/// tree; a failed read is asked again.
+pub fn declares_feature(pkg: &str, feature: &str, dir: Option<&Path>) -> Result<bool, String> {
+    type Key = (String, String, Option<std::path::PathBuf>);
+    static DECLARED: OnceLock<Mutex<HashMap<Key, bool>>> = OnceLock::new();
+    let key = (
+        pkg.to_string(),
+        feature.to_string(),
+        dir.map(Path::to_path_buf),
+    );
+    let mut memo = DECLARED
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|e| e.to_string())?;
+    if let Some(declared) = memo.get(&key) {
+        return Ok(*declared);
+    }
+    let meta = metadata(dir, true).map_err(|e| e.to_string())?;
+    let declared = declares_feature_in(&meta, pkg, feature);
+    memo.insert(key, declared);
+    Ok(declared)
+}
+
 /// The source file of `pkg`'s bench target `target`, from `meta`.
 pub(crate) fn bench_src_in(meta: &Value, pkg: &str, target: &str) -> Option<String> {
     let packages = meta["packages"].as_array().into_iter().flatten();
@@ -383,6 +416,17 @@ mod tests {
         // A bench under a different name is not the one the gate runs.
         assert!(!bench_target_in(&m, "server", "criterion"));
         assert!(!bench_target_in(&m, "absent", "soothfast"));
+    }
+
+    #[test]
+    fn a_declared_feature_is_found_only_on_the_package_that_has_it() {
+        let internals = json!({ "name": "core", "id": "core", "targets": [],
+            "features": { "soothfast": ["dep:soothfast"] } });
+        let plain = json!({ "name": "plain", "id": "plain", "targets": [], "features": {} });
+        let m = meta(vec![internals, plain], vec!["core", "plain"], vec![]);
+        assert!(declares_feature_in(&m, "core", "soothfast"));
+        assert!(!declares_feature_in(&m, "plain", "soothfast"));
+        assert!(!declares_feature_in(&m, "absent", "soothfast"));
     }
 
     #[test]

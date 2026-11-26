@@ -60,6 +60,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
     let mut labels = false;
     let mut no_labels = false;
     let mut dev_profile = false;
+    let mut internals = false;
     let mut bench: Vec<String> = Vec::new();
     let mut flags = Settings::default();
     let mut dir: Option<String> = None;
@@ -79,6 +80,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
             "--labels" => labels = true,
             "--no-labels" => no_labels = true,
             "--dev-profile" => dev_profile = true,
+            "--internals" => internals = true,
             "-p" | "--package" => match it.next() {
                 Some(p) => bench.push(p.clone()),
                 None => return err("-p needs a package to add a bench target to"),
@@ -146,6 +148,16 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     ws.labels = labels;
+    if internals && bench.is_empty() {
+        return err("--internals needs -p PKG");
+    }
+    if internals && !check {
+        for pkg in &bench {
+            if let Err(e) = rust::add_internals(pkg) {
+                return err(&e);
+            }
+        }
+    }
     for note in &notes {
         println!("{note}");
     }
