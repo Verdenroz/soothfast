@@ -8,7 +8,7 @@ use soothfast_docs::surface::Surface;
 
 use super::Row;
 use crate::coverage_executed::{self, Cached, Regions};
-use crate::invoke::CommonArgs;
+use crate::invoke::{CommonArgs, harness_predating_setup_exclusion, workspace_root};
 use crate::workspace;
 
 /// Whether an executed run may happen while building a report.
@@ -35,6 +35,9 @@ pub(super) enum Origin {
     Run,
     /// The run failed, so the column is a lower bound.
     Partial,
+    /// The bench harness credits code that runs only in setup, so the column
+    /// is an upper bound on what is measured.
+    SetupCredited,
     /// A stored run, finished at this many seconds since the epoch.
     Stored(u64),
 }
@@ -90,11 +93,14 @@ pub(crate) fn gather(
     )?;
     let target = bench.target.as_deref().unwrap_or("soothfast");
     let benches = if workspace::has_bench_target(pkg, target, None).map_err(|e| e.to_string())? {
-        Some(column(
-            wants.benches,
-            || coverage_executed::cached_benches(bench),
-            || coverage_executed::benches(bench),
-        )?)
+        Some(
+            column(
+                wants.benches,
+                || coverage_executed::cached_benches(bench),
+                || coverage_executed::benches(bench),
+            )
+            .map(|column| credited_setup(column, pkg, &lock()))?,
+        )
     } else {
         None
     };
@@ -114,6 +120,31 @@ pub(crate) fn gather(
         },
         declared: coverage_executed::declared_paths(surf),
     })
+}
+
+fn lock() -> String {
+    workspace_root()
+        .and_then(|root| std::fs::read_to_string(root.join("Cargo.lock")))
+        .unwrap_or_default()
+}
+
+/// `column` marked when `lock` pins a bench harness that counts setup code as
+/// measured, with a warning.
+fn credited_setup(column: Column, pkg: &str, lock: &str) -> Column {
+    let (regions, origin) = column;
+    let Some(version) = harness_predating_setup_exclusion(lock).filter(|_| regions.is_some())
+    else {
+        return (regions, origin);
+    };
+    eprintln!(
+        "{pkg}: bench harness soothfast-measure {version} predates setup exclusion; measured includes code that runs only in bench setup (upgrade soothfast to fix)"
+    );
+    let origin = if origin == Origin::Partial {
+        origin
+    } else {
+        Origin::SetupCredited
+    };
+    (regions, origin)
 }
 
 fn column(
@@ -175,6 +206,9 @@ pub(super) fn note(rows: &[Row], name: &str, told: bool) -> Option<String> {
     if origins.contains(&Origin::Partial) {
         parts.push("lower bound: the bench run failed".to_string());
     }
+    if origins.contains(&Origin::SetupCredited) {
+        parts.push("upper bound: the bench harness predates setup exclusion".to_string());
+    }
     match unrun_packages(rows, name) {
         0 => {}
         n => parts.push(format!("{n} package(s) not run")),
@@ -198,14 +232,16 @@ fn unrun_packages(rows: &[Row], name: &str) -> usize {
         .len()
 }
 
-/// Whether the figure for `name` is a lower bound: a bench run failed, or a
-/// package it would count was not run.
+/// Whether the figure for `name` is only a bound: a bench run failed, a
+/// harness credits setup, or a package it would count was not run.
 pub(super) fn partial(rows: &[Row], name: &str) -> bool {
     matches!(name, "tested" | "measured")
-        && (rows
-            .iter()
-            .any(|r| r.executed.of(name) == Some(Origin::Partial))
-            || unrun_packages(rows, name) > 0)
+        && (rows.iter().any(|r| {
+            matches!(
+                r.executed.of(name),
+                Some(Origin::Partial | Origin::SetupCredited)
+            )
+        }) || unrun_packages(rows, name) > 0)
 }
 
 /// `unix` as `YYYY-MM-DD HH:MM UTC`.
@@ -363,6 +399,28 @@ mod tests {
             Some("lower bound: the bench run failed")
         );
         assert!(partial(&rows, "measured") && !partial(&rows, "tested"));
+    }
+
+    #[test]
+    fn an_older_registry_harness_marks_the_measured_column_partial() {
+        let lock = "[[package]]\nname = \"soothfast-measure\"\nversion = \"0.8.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n";
+        let ran = || (Some(Regions::default()), Origin::Run);
+        assert_eq!(credited_setup(ran(), "demo", lock).1, Origin::SetupCredited);
+        assert_eq!(credited_setup(ran(), "demo", "").1, Origin::Run);
+        let path = "[[package]]\nname = \"soothfast-measure\"\nversion = \"0.8.0\"\n";
+        assert_eq!(credited_setup(ran(), "demo", path).1, Origin::Run);
+        let rows = [row(
+            "d::f",
+            Provenance {
+                tests: None,
+                benches: Some(Origin::SetupCredited),
+            },
+        )];
+        assert!(partial(&rows, "measured"));
+        assert_eq!(
+            note(&rows, "measured", true).as_deref(),
+            Some("upper bound: the bench harness predates setup exclusion")
+        );
     }
 
     #[test]

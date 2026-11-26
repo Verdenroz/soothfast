@@ -35,6 +35,25 @@ pub(crate) fn lock_packages(lock: &str) -> Vec<LockPkg> {
         .collect()
 }
 
+/// The first `soothfast-measure` release that resets coverage counters around
+/// each measured region, so setup code is not credited as measured.
+pub(crate) const SETUP_EXCLUSION_SINCE: &str = "0.9.0";
+
+/// The locked registry version of `soothfast-measure` when it is older than
+/// [`SETUP_EXCLUSION_SINCE`]. Path dependencies and a missing entry are current.
+pub(crate) fn harness_predating_setup_exclusion(lock: &str) -> Option<String> {
+    let triple = |v: &str| -> Option<[u64; 3]> {
+        let mut parts = v.split(['.', '-', '+']).map(|n| n.parse().ok());
+        Some([parts.next()??, parts.next()??, parts.next()??])
+    };
+    let wanted = triple(SETUP_EXCLUSION_SINCE)?;
+    lock_packages(lock)
+        .into_iter()
+        .find(|p| p.registry && p.name == "soothfast-measure")
+        .filter(|p| triple(&p.version).is_some_and(|v| v < wanted))
+        .map(|p| p.version)
+}
+
 /// Soothfast-family registry entries whose worktree version differs from
 /// HEAD's: (name, worktree version, HEAD version).
 fn harness_mismatches(head_lock: &str, wt_lock: &str) -> Vec<(String, String, String)> {
@@ -361,7 +380,7 @@ fn retarget_line(line: &str, from: usize, to: &str) -> Option<String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{harness_mismatches, only_scratch};
+    use super::{harness_mismatches, harness_predating_setup_exclusion, only_scratch};
 
     #[test]
     fn the_store_and_the_action_checkout_leave_the_tree_clean() {
@@ -406,6 +425,32 @@ name = "soothfast-measure"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 "#;
+
+    fn measure_lock(version: &str, source: bool) -> String {
+        let source = if source {
+            "source = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+        } else {
+            ""
+        };
+        format!("[[package]]\nname = \"soothfast-measure\"\nversion = \"{version}\"\n{source}")
+    }
+
+    #[test]
+    fn an_older_registry_harness_predates_setup_exclusion() {
+        let lock = measure_lock("0.8.0", true);
+        assert_eq!(
+            harness_predating_setup_exclusion(&lock).as_deref(),
+            Some("0.8.0")
+        );
+        assert!(harness_predating_setup_exclusion(&measure_lock("0.9.0", true)).is_none());
+        assert!(harness_predating_setup_exclusion(&measure_lock("0.10.2", true)).is_none());
+    }
+
+    #[test]
+    fn a_path_harness_or_none_at_all_does_not() {
+        assert!(harness_predating_setup_exclusion(&measure_lock("0.8.0", false)).is_none());
+        assert!(harness_predating_setup_exclusion("").is_none());
+    }
 
     #[test]
     fn pins_family_crates_to_heads_versions() {

@@ -250,6 +250,11 @@ Normal bench builds do not set the cfg, so the runner compiles without this
 code. Runner code that executes after the last item's region, such as
 printing results, still counts.
 
+A workspace whose `Cargo.lock` pins a registry `soothfast-measure` older than
+0.9.0 builds a runner without this code, so setup still counts. `coverage
+executed` and `coverage report --executed` warn once per package and mark
+`measured` as a bound (`partial` in the JSON).
+
 ### What it does not see
 
 - Doc tests are not instrumented, so an item only a doc test runs is untested.
