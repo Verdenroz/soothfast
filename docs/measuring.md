@@ -164,7 +164,13 @@ MIR, ahead of inlining.
   statics, reads as not executed.
 - Benches run under the dev profile, with the runner's `alloc` backend, which
   runs each item once. Code behind `cfg(debug_assertions)` can credit an item
-  the bench profile never reaches.
+  the bench profile never reaches. A bench run that exits nonzero, such as a
+  claim that holds only under the bench profile, still counts.
+- A function a macro generates has its regions on the lines of the macro
+  definition, while its span is the invocation, so it reads as not executed.
+- The build takes its flags from `CARGO_ENCODED_RUSTFLAGS` or `RUSTFLAGS`
+  plus `-Cinstrument-coverage`. Flags set only in `.cargo/config.toml` are not
+  applied.
 
 ### Cost
 

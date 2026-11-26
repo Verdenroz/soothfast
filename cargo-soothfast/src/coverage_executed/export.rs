@@ -9,7 +9,7 @@ use super::tools::Tools;
 
 /// Sources of dependencies and the standard library carry no public item of
 /// the package, and dominate the export if left in.
-const IGNORED_SOURCES: &str = "/\\.cargo/registry/|/\\.rustup/|/rustc/";
+const IGNORED_SOURCES: &str = "/\\.cargo/registry/|/\\.rustup/toolchains/|^/rustc/";
 
 /// The regions the profiles in `profraw` record for `executables`.
 pub fn regions(tools: &Tools, executables: &[PathBuf], profraw: &Path) -> Result<Regions, String> {

@@ -110,11 +110,14 @@ fn test_executables(messages: &[Value]) -> Vec<PathBuf> {
 }
 
 /// Run `cmd` with raw profiles written into `profraw`, which must be a
-/// directory: each process adds a file of its own.
-pub fn run_into(mut cmd: Command, profraw: &Path) -> Result<(), String> {
-    cmd.env("LLVM_PROFILE_FILE", profraw.join("%m-%p.profraw"));
+/// directory: each process adds a file of its own. A failing exit is an error
+/// unless `lenient`, for a run whose failure says nothing about what it
+/// executed.
+pub fn run_into(mut cmd: Command, profraw: &Path, lenient: bool) -> Result<(), String> {
+    let dir = profraw.to_string_lossy().replace('%', "%%");
+    cmd.env("LLVM_PROFILE_FILE", format!("{dir}/%m-%p.profraw"));
     let out = cmd.output().map_err(|e| format!("cargo: {e}"))?;
-    if out.status.success() {
+    if out.status.success() || lenient {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&out.stderr);
