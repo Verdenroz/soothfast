@@ -33,6 +33,10 @@
 - Mark measured partial for harnesses predating setup exclusion (#524)
 - Coverage features, member tests and shared columns (#521)
 
+### 📝 Documentation
+
+- Tighten the claim parse tail bound to 2µs (#526)
+
 ### 🔧 Internal
 
 - Write the fake launcher from a child process (#512)
