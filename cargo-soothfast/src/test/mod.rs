@@ -1,6 +1,7 @@
 //! `cargo soothfast test`: run only the tests a change can affect.
 
 mod cargo;
+mod cert;
 pub(crate) mod config;
 #[cfg(test)]
 pub(crate) mod fixture;
@@ -142,6 +143,26 @@ fn drive(args: &[String]) -> Result<i32, String> {
         write_result(&args, &tally, 0, total, started)?;
         return Ok(0);
     }
+    let certifier = match args.no_run {
+        true => None,
+        false => Some(cert::Certifier::new(&root, &cfg, &args, &selected)?),
+    };
+    let certificate = match (&certifier, args.no_cache) {
+        (Some(c), false) => c.key()?,
+        _ => None,
+    };
+    let passes = Passes::open();
+    if certificate
+        .as_deref()
+        .zip(passes.as_ref())
+        .is_some_and(|(key, passes)| passes.has(key))
+    {
+        tally.certified = true;
+        println!("{}", tally.summary(selected.len(), total));
+        last::record(&root, 0);
+        write_result(&args, &tally, selected.len(), total, started)?;
+        return Ok(0);
+    }
     let run_dir = RunDir::create()?;
     let messages = cargo::build(&selected, &args.cargo_args).map_err(|e| e.to_string())?;
     let built = cargo::collect(&messages, &pkgs);
@@ -199,10 +220,32 @@ fn drive(args: &[String]) -> Result<i32, String> {
         cargo::run_target(bin, &args.cargo_args, &args.run_args)
             .map_err(|e| format!("{label}: {e}"))
     })?;
+    if let (Some(certifier), Some(key), Some(passes)) = (&certifier, &certificate, &passes) {
+        store_certificate(certifier, key, passes, &tally)?;
+    }
     println!("{}", tally.summary(selected.len(), total));
     last::record(&root, tally.failed.len());
     write_result(&args, &tally, selected.len(), total, started)?;
     Ok(i32::from(!tally.failed.is_empty()))
+}
+
+/// A certificate is stored only for a run where nothing failed or flaked and
+/// the inputs are the ones it was keyed under.
+fn store_certificate(
+    certifier: &cert::Certifier,
+    key: &str,
+    passes: &Passes,
+    tally: &Tally,
+) -> Result<(), String> {
+    if !tally.is_clean() {
+        return Ok(());
+    }
+    if certifier.key()?.as_deref() == Some(key) {
+        passes.record("run", key);
+    } else {
+        println!("test: the run changed its inputs; no certificate stored");
+    }
+    Ok(())
 }
 
 /// Rerun each failed binary up to `retries` times. A binary that passes a
@@ -551,10 +594,21 @@ struct Tally {
     failed: Vec<String>,
     /// Binaries that failed, then passed on a rerun.
     flaky: Vec<String>,
+    /// The run was answered from a stored certificate.
+    certified: bool,
 }
 
 impl Tally {
+    fn is_clean(&self) -> bool {
+        self.failed.is_empty() && self.flaky.is_empty()
+    }
+
     fn summary(&self, selected: usize, total: usize) -> String {
+        if self.certified {
+            return format!(
+                "test: {selected} of {total} packages selected, answered from a stored pass: no input changed since a run where every binary and doc test passed"
+            );
+        }
         let mut line = format!(
             "test: {selected} of {total} packages selected, {} binaries run, {} skipped (cached), doc tests in {} packages",
             self.ran, self.skipped, self.doc
@@ -576,7 +630,7 @@ impl Tally {
             Verdict::Skipped
         } else if !self.flaky.is_empty() {
             Verdict::Flaky
-        } else if self.ran == 0 {
+        } else if self.ran == 0 || self.certified {
             Verdict::Reused
         } else {
             Verdict::Pass
@@ -669,6 +723,28 @@ mod tests {
             ..Tally::default()
         };
         assert_eq!(ran.verdict(1), project::Verdict::Pass);
+    }
+
+    #[test]
+    fn only_a_run_without_failures_or_flakes_is_clean() {
+        let tally = |failed: &[&str], flaky: &[&str]| Tally {
+            failed: failed.iter().map(|s| s.to_string()).collect(),
+            flaky: flaky.iter().map(|s| s.to_string()).collect(),
+            ..Tally::default()
+        };
+        assert!(tally(&[], &[]).is_clean());
+        assert!(!tally(&["a"], &[]).is_clean());
+        assert!(!tally(&[], &["a"]).is_clean());
+    }
+
+    #[test]
+    fn a_certified_run_says_why_nothing_ran() {
+        let tally = Tally {
+            certified: true,
+            ..Tally::default()
+        };
+        assert!(tally.summary(2, 5).contains("answered from a stored pass"));
+        assert_eq!(tally.verdict(2), project::Verdict::Reused);
     }
 
     #[test]

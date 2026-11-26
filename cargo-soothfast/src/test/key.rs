@@ -134,7 +134,7 @@ impl Keyer {
 }
 
 /// The current value of each named variable, empty when unset.
-fn env_values(names: &[String]) -> Vec<(String, String)> {
+pub(super) fn env_values(names: &[String]) -> Vec<(String, String)> {
     names
         .iter()
         .map(|n| (n.clone(), std::env::var(n).unwrap_or_default()))
