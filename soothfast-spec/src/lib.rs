@@ -29,6 +29,7 @@ pub mod providers;
 pub mod reconcile;
 pub mod schema;
 pub mod serialize;
+pub mod specified;
 
 /// One operation a spec declares.
 #[derive(Debug, Clone, PartialEq)]
