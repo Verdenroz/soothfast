@@ -231,7 +231,7 @@ taken as-is, and underscores are allowed for readability, as in <code>25_000</co
 <code>docs check</code> evaluates the expression against
 <code>baseline[&quot;items&quot;][item][backend][metric]</code> and fails if the metric is
 missing or the comparison does not hold.</p>
-<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 145 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.5" y2="11" class="chip-scale-fill" style="--fill-len:0.5"/><circle cx="8.5" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.5"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
+<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 179 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.62" y2="11" class="chip-scale-fill" style="--fill-len:0.62"/><circle cx="8.62" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.62"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
 <p>Parsing one claim expression, the exact work <code>docs check</code> does per marker on
 this page, costs under 50µs at the tail.</p>
 <p>A claim can also bound the difference of two items' metrics, which is how to
@@ -263,7 +263,7 @@ prints one row per item and a summary per dimension:</p>
 <tbody>
 <tr><td><code>documented</code></td><td>its doc comment has text</td></tr>
 <tr><td><code>documented+</code></td><td>it is documented and its docs hold a fenced Rust example, or a <code>soothfast:bind</code> or <code>soothfast:claim</code> marker in the repo's tracked markdown names its path or a re-export of it; a claim names a bench, so it counts through that bench's <code>covers</code> (or the bench's own id), and only in a package with a bench target</td></tr>
-<tr><td><code>tested</code></td><td>the package's tests execute a line of it (doc tests are not instrumented)</td></tr>
+<tr><td><code>tested</code></td><td>the package's tests, or those of a workspace crate it re-exports the item from, execute a line of it (doc tests are not instrumented)</td></tr>
 <tr><td><code>measured (declared)</code></td><td>a bench's <code>covers</code> names it, or the bench is the item; callables only, other items show <code>n/a</code></td></tr>
 <tr><td><code>measured</code></td><td>the package's bench target executes a line of it, one pass over each bench</td></tr>
 <tr><td><code>gated</code></td><td>a bench in the gate's feature set declares it, through its <code>covers</code> or as the bench itself; callables only, other items show <code>n/a</code></td></tr>
@@ -289,11 +289,12 @@ With no stored run, <code>tested</code> and <code>measured</code> read <code>n/a
 summary then adds <code>N package(s) not run</code> and the figure is a lower bound. Only a run that finished is stored: a bench run that exits
 non-zero still yields a figure, but a lower bound (<code>partial</code> in the JSON, <code>lower
 bound</code> in the text) that is not kept, and a failing test run is an error.</p>
-<p><code>gated</code> reads the registry under the gate's features (<code>[gate] features</code>, or
-<code>[package.NAME.gate]</code>), not the report's. Where they differ, the report builds
-the package's bench a second time to list that registry. An item is gated when
-a bench the gate runs declares it. Claims sharpen what the gate checks but do
-not widen what it measures, so they add nothing here.
+<p>The report builds the package's bench under the gate's features (<code>[gate]
+features</code>, or <code>[package.NAME.gate]</code>), not the report's: a bench target with
+<code>required-features</code> exists only there. The bench's registry feeds
+<code>measured (declared)</code> and <code>gated</code> alike, so the two read the same set. An item
+is gated when a bench the gate runs declares it. Claims sharpen what the gate
+checks but do not widen what it measures, so they add nothing here.
 A <code>covers</code> that names no public item of
 the package prints <code>warning: bench ID covers PATH, which is not a public item
 of PKG</code> on stderr, from <code>coverage report</code> and <code>coverage measure</code> alike.</p>

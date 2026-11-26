@@ -298,10 +298,27 @@ coverage executed: 9/34 public item(s) measured
 <p><code>--tests</code> or <code>--benches</code> runs one column, and <code>--json</code> prints
 <code>{&quot;package&quot;, &quot;items&quot;: [{&quot;path&quot;, &quot;kind&quot;, &quot;tested&quot;, &quot;measured&quot;}]}</code> with a
 column left out when it did not run. <code>--bench NAME</code> picks the bench target
-(default <code>soothfast</code>) and <code>--features</code> the feature set.</p>
+(default <code>soothfast</code>).</p>
+<p>The two builds take separate feature sets. <code>--features</code> sets the surface and
+the test build; unset, it is what <code>coverage report</code> reads, the package's
+<code>docs</code> features and then its <code>gate</code> features. <code>--bench-features</code> sets the
+bench build; unset, it is the package's <code>gate</code> features, which a bench target
+with <code>required-features</code> needs to build at all.</p>
 <p>The denominator is the public functions, structs, enums, unions and traits of
-the package, plus inherent methods. Trait-impl methods are not items of their
+the package, plus inherent methods, read under the same features and by the
+same code as the <code>tested</code> and <code>measured</code> columns of <code>coverage report
+--executed</code>, so the two commands print the same figures. An item a run cannot
+reach, such as one behind a feature the bench build leaves off, reads not
+executed and stays in the denominator. Trait-impl methods are not items of their
 own, and <code>#[doc(hidden)]</code> items are not in the rustdoc surface.</p>
+<p>A package that re-exports items of other workspace crates (<code>pub use
+other_crate::item</code>) is credited by those crates' tests too. When a counted
+item's span lies in another member, <code>tested</code> builds and runs that member's test
+targets beside the package's own, so <code>finance_query::indicators::wma</code> counts
+when the crate that defines it tests it. The cost is one more instrumented test
+build and run per such member, a stored run stays valid until any file of the
+package or its workspace dependencies changes, and a member only ever adds
+credit: its tests never remove an item from <code>tested</code>.</p>
 <h3 id="how-an-item-counts-as-executed">How an item counts as executed<a class="anchor" href="#how-an-item-counts-as-executed" aria-label="Link to this section">#</a></h3>
 <p>An item is executed when any region with a nonzero count lies on a line of its
 span, in the same file. The span comes from rustdoc. A function or inherent
