@@ -120,9 +120,9 @@ taken as-is, and underscores are allowed for readability, as in `25_000`.
 `baseline["items"][item][backend][metric]` and fails if the metric is
 missing or the comparison does not hold.
 
-<!-- soothfast:claim soothfast_docs::bench_claim_parse.walltime.p99_ns < 50000 -->
+<!-- soothfast:claim soothfast_docs::bench_claim_parse.walltime.p99_ns < 2000 -->
 Parsing one claim expression, the exact work `docs check` does per marker on
-this page, costs under 50µs at the tail.
+this page, costs under 2µs at the tail.
 <!-- /soothfast:claim -->
 
 A claim can also bound the difference of two items' metrics, which is how to
