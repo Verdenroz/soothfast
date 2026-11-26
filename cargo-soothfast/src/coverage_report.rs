@@ -771,6 +771,37 @@ mod tests {
     }
 
     #[test]
+    fn the_composite_badge_counts_executed_dimensions_once_computed() {
+        let row = |path: &str, tested, specified| Row {
+            path: path.into(),
+            kind: "function".into(),
+            documented: true,
+            tested,
+            specified,
+            ..Row::default()
+        };
+        let rows = [
+            row("d::a", Some(true), Some(true)),
+            row("d::b", Some(false), None),
+        ];
+        let files = badge_set(&rows);
+        let message =
+            |stem: &str| files.iter().find(|(s, _)| s == stem).unwrap().1["message"].clone();
+        assert_eq!(message("coverage-tested"), "50%");
+        assert_eq!(message("coverage-specified"), "100%");
+        assert_eq!(message("coverage-measured"), "n/a");
+        assert_eq!(message("coverage"), "83%");
+    }
+
+    #[test]
+    fn every_computed_dimension_takes_a_minimum() {
+        for name in ["tested", "measured", "specified"] {
+            assert!(is_dimension(name), "{name}");
+        }
+        assert!(!is_dimension("covered"));
+    }
+
+    #[test]
     fn a_dimension_no_row_can_tell_has_a_grey_badge_and_no_vote() {
         let rows = vec![Row {
             path: "src/a.py#f".into(),
