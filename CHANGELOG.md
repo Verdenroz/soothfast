@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Per-item coverage report with a shared denominator (#499)
 - Report whether routes and tools are specified (#498)
 - Suggest a lighter dev debuginfo profile (#494)
 - Share test passes across linked worktrees (#493)
@@ -22,6 +23,14 @@
 ### 🔍 API surface
 
 ```
+# soothfast-docs
+ADDED    soothfast_docs::surface::Counted
+ADDED    soothfast_docs::surface::Surface::counted
+ADDED    soothfast_docs::surface::counted::Counted
+CHANGED  soothfast_docs::surface::ItemInfo (signature)
+CHANGED  soothfast_docs::surface::Surface (body)
+CHANGED  soothfast_docs::surface::from_rustdoc_with (body)
+
 # soothfast-spec
 ADDED    soothfast_spec::specified
 ADDED    soothfast_spec::specified::Specified
