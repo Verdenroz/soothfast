@@ -37,7 +37,7 @@ impl Id {
         Some(Id {
             pkg: common.pkg.clone()?,
             target: common.target.as_deref().unwrap_or("soothfast").to_string(),
-            features: common.features.clone(),
+            features: common.bench_features(dir).ok()?,
             discover: matches!(build, Build::Discover),
             dir: dir.map(Path::to_path_buf),
             target_dir: target_dir.map(Path::to_path_buf),
@@ -269,7 +269,7 @@ pub fn storable(common: &CommonArgs, build: Build) -> bool {
 /// build the store cannot hold; nothing is built. With `--features` set,
 /// nothing in the target dir tells which features a build had, so none is.
 pub fn already_built(common: &CommonArgs) -> Option<PathBuf> {
-    if common.features.is_some() {
+    if common.bench_features(None).ok()?.is_some() {
         return None;
     }
     let target = common.target.as_deref().unwrap_or("soothfast");

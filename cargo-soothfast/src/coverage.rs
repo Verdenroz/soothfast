@@ -230,13 +230,44 @@ pub(crate) fn declared_covers(records: &[Value]) -> BTreeSet<String> {
 }
 
 /// A warning per bench whose `covers` names no item or method of `surf`.
+/// A path into the package's own source (`crate::module::item`) is not
+/// public, so it passes when its first module is one the package has.
 pub(crate) fn dangling_covers(records: &[Value], surf: &Surface, pkg: &str) -> Vec<String> {
+    let src = invoke::pkg_dir(pkg).map(|dir| dir.join("src"));
     benches(records)
         .filter(|(_, covers)| !covers.is_empty() && surf.lookup(covers).is_none())
+        .filter(|(_, covers)| {
+            !src.as_ref()
+                .is_ok_and(|src| in_own_source(covers, pkg, |m| module_file(src, m)))
+        })
         .map(|(id, covers)| {
             format!("warning: bench {id} covers {covers}, which is not a public item of {pkg}")
         })
         .collect()
+}
+
+/// Whether `covers` is `crate::..` or `<pkg>::..` and its first module, when
+/// it has one, satisfies `has_module`.
+fn in_own_source(covers: &str, pkg: &str, has_module: impl Fn(&str) -> bool) -> bool {
+    let mut segments = covers.split("::");
+    let own = segments.next() == Some("crate")
+        || covers.starts_with(&format!("{}::", pkg.replace('-', "_")));
+    let modules: Vec<&str> = segments.collect();
+    own && match modules.as_slice() {
+        [] | [_] => true,
+        [first, ..] => has_module(first),
+    }
+}
+
+/// Whether `src` has the top-level module `module`: a file, a directory with
+/// `mod.rs`, or an inline `mod` in the crate root.
+fn module_file(src: &Path, module: &str) -> bool {
+    src.join(format!("{module}.rs")).is_file()
+        || src.join(module).join("mod.rs").is_file()
+        || ["lib.rs", "main.rs"].iter().any(|root| {
+            std::fs::read_to_string(src.join(root))
+                .is_ok_and(|text| text.contains(&format!("mod {module} {{")))
+        })
 }
 
 /// Source trees to cover besides the `-p` crates: `--dir`/`--lang`, else the
@@ -311,7 +342,7 @@ mod tests {
     use serde_json::json;
     use soothfast_docs::surface::{ItemInfo, Surface};
 
-    use super::{dangling_covers, pct, write_badge};
+    use super::{dangling_covers, in_own_source, module_file, pct, write_badge};
 
     fn surface() -> Surface {
         let info = |kind: &str| ItemInfo {
@@ -343,6 +374,29 @@ mod tests {
                 "warning: bench demo::bench_old covers demo::gone, which is not a public item of demo"
             ]
         );
+    }
+
+    #[test]
+    fn a_covers_into_the_own_source_passes_when_its_module_exists() {
+        let has = |m: &str| m == "adapters";
+        assert!(in_own_source("crate::adapters::parse", "demo", has));
+        assert!(in_own_source("demo::adapters::yahoo::parse", "demo", has));
+        assert!(in_own_source("crate::parse", "demo", has));
+        assert!(!in_own_source("crate::adapter::yahoo::parse", "demo", has));
+        assert!(!in_own_source("other::adapters::parse", "demo", has));
+    }
+
+    #[test]
+    fn a_module_is_a_file_a_mod_rs_directory_or_inline_in_the_root() {
+        let dir = std::env::temp_dir().join(format!("sf-covers-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("b")).unwrap();
+        std::fs::write(dir.join("a.rs"), "").unwrap();
+        std::fs::write(dir.join("b/mod.rs"), "").unwrap();
+        assert!(module_file(&dir, "a") && module_file(&dir, "b"));
+        std::fs::write(dir.join("lib.rs"), "pub(crate) mod inline {\n}\n").unwrap();
+        assert!(module_file(&dir, "inline"));
+        assert!(!module_file(&dir, "c"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
