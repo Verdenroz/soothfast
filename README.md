@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/Verdenroz/soothfast/actions/workflows/ci.yml"><img src="https://github.com/Verdenroz/soothfast/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
-  <a href="https://verdenroz.github.io/soothfast/coverage/"><img src="https://verdenroz.github.io/soothfast/perf/badges/coverage.svg" alt="soothfast docs coverage: measured on every site deploy"></a>
+  <a href="https://verdenroz.github.io/soothfast/coverage/"><img src="https://verdenroz.github.io/soothfast/perf/badges/coverage.svg" alt="soothfast coverage: mean of the measured dimensions, rebuilt on every site deploy"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3A56C5.svg" alt="MIT license"></a>
 </p>
 

@@ -163,6 +163,9 @@ fn held_to_minimums(rows: &[Row], pkgs: &[String]) -> i32 {
             })
         })
         .collect();
+    for name in PENDING.iter().filter(|n| settings.minimum(n).is_some()) {
+        eprintln!("coverage: a minimum is set on {name}, which no command computes yet");
+    }
     for f in figures.iter().filter(|f| f.short()) {
         println!(
             "coverage: {} is {}%, below the minimum {}%",
