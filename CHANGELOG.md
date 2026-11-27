@@ -1,13 +1,25 @@
 # Changelog
 
-## Unreleased (draft vs v0.9.0)
+## 0.9.1 - 2026-11-26
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
+A patch that makes the reusable CI workflow faster on a pull request. Proto,
+coverage and capture checks share one job, and spec packages keep parallel
+jobs of their own, with `[ci] group = ["spec"]` to put packages that share
+workspace crates in one job instead. rust-cache saves only from a
+default-branch push, and a push whose target came back empty rebuilds before
+saving, so a pull request no longer restores an empty target and compiles
+cold. The gate reuses the default branch's stored bench executable for the
+merge-base instead of building it again, when the executable does not embed
+the checkout path.
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+### Upgrade notes
+- Nothing is required. Bench executable and check job caches are keyed anew,
+  so the first run after upgrading builds them once, and a pull request's
+  check jobs warm up after the next default-branch push.
+- A lane pass is stored only under a well-formed key; a `lanes.json` with any
+  other key is rejected whole.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
