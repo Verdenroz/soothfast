@@ -12,6 +12,7 @@
 
 ### ⚡ Performance
 
+- ci: Hand the bench build to the docs job (#538)
 - ci: Save lane passes beside the verdict (#536)
 
 
