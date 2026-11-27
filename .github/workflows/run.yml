@@ -324,12 +324,13 @@ jobs:
           name: soothfast-baseline-rust-attempt-${{ github.run_attempt }}
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
-      # Only a gate job of its own reads the packed stores.
+      # A gate job of its own reads the packed stores, and the docs job's site
+      # build lists the bench items for its coverage badges.
       - name: Pack the stores
-        if: always() && env.GATES_HERE != 'true'
+        if: always() && (env.GATES_HERE != 'true' || needs.plan.outputs.site_in_docs == 'true')
         run: if [ -d "$RUNNER_TEMP/store" ]; then tar -C "$RUNNER_TEMP/store" -cf "$RUNNER_TEMP/store.tar" .; fi
       - name: Upload the stores
-        if: always() && env.GATES_HERE != 'true'
+        if: always() && (env.GATES_HERE != 'true' || needs.plan.outputs.site_in_docs == 'true')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: soothfast-store-bench
@@ -1057,10 +1058,17 @@ jobs:
         with:
           pattern: soothfast-store-spec-*
           path: ${{ runner.temp }}/spec-stores
-      # The executable store is keyed by the compiler, and the spec jobs build on stable.
-      - name: Merge the spec jobs' builds
+      - name: Download the bench build
+        if: ${{ !cancelled() && needs.plan.outputs.site_in_docs == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: soothfast-store-bench
+          path: ${{ runner.temp }}/spec-stores/bench
+      # The executable store is keyed by the compiler, and the spec and bench jobs build on stable.
+      - name: Merge the spec and bench builds
         id: spec-stores
-        if: needs.plan.outputs.checks_docs_any == 'true'
+        if: ${{ !cancelled() && (needs.plan.outputs.checks_docs_any == 'true' || needs.plan.outputs.site_in_docs == 'true') }}
         env:
           CLI: ${{ steps.soothfast.outputs.bin }}
         run: |
@@ -1118,7 +1126,7 @@ jobs:
         env:
           SPEC_BUILDS: ${{ steps.spec-stores.outputs.hit }}
         run: |
-          # The compiler and CARGO_INCREMENTAL the spec jobs built under, which the store keys name.
+          # The compiler and CARGO_INCREMENTAL the spec and bench jobs built under, which the store keys name.
           if [ "$SPEC_BUILDS" = true ]; then
             export RUSTUP_TOOLCHAIN=stable CARGO_INCREMENTAL=0
           fi

@@ -879,7 +879,9 @@ for them only when `[ci] site_run` hooks the site build. Then the spec checks
 run in a job of their own, `check-docs`, and each uploads the routes
 executable and rustdoc JSON it built, which the docs job merges into its
 stores, so a hook that renders routes pages compiles nothing. Without a hook
-the spec jobs run beside the docs job.
+the spec jobs run beside the docs job. The bench build job uploads the bench
+executables it built as well, so the coverage badges `report render` writes
+list the bench items without building the bench target again.
 
 Only `run.yml` runs these jobs. `cargo soothfast init` writes a workflow that
 calls it whenever the file configures one of them or `[ci] pages`. A cargo
