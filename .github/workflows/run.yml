@@ -589,7 +589,7 @@ jobs:
   # Stores the lanes a pull request or the default branch passed, under the run's own ref, for later runs to carry.
   lane-store:
     name: Save lane passes
-    needs: [plan, build-bench, gate-rust, gate, docs, check, check-docs, verdict]
+    needs: [plan, build-bench, gate-rust, gate, docs, check, check-docs]
     if: >-
       ${{ !cancelled() && needs.plan.result == 'success' && (github.event_name == 'pull_request'
       || (github.event_name == 'push'
