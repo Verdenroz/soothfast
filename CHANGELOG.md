@@ -1,14 +1,43 @@
 # Changelog
 
-## Unreleased (draft vs v0.9.1)
+## 0.10.0 - 2026-11-27
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
+A minor release with three additions. An `async fn` bench can now run on a
+runtime you supply: `#[bench(executor = f)]` names a `fn() -> E` where `E`
+implements the new `soothfast::Executor`, `setup` and `setup_sized` may be
+`async`, and both are built outside the measured region. The `tokio` feature
+of `soothfast`, off by default, implements `Executor` for
+`tokio::runtime::Runtime`. `perfcnt` counts only the calling thread; `alloc`
+and `callgrind` also count other threads, such as a stand-in server's.
+`docs check` over several packages builds each package's surface with its own
+`[package.X.docs]` features and target in one check, and a multi-package
+coverage check only needs the packages' minimums to agree. The Python and
+TypeScript SDKs emit discriminated unions for a `oneOf` whose arms each carry
+a distinct string `const` on one shared property, whether the arm is inline,
+an `allOf` of the tag and a `$ref`, or a `$ref` to a component carrying the
+tag, with an OpenAPI `discriminator` naming the property when present.
+TypeScript intersects each arm with its literal tag; Python decodes by the
+tag value and raises `ValueError` on one it has no arm for.
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+### Upgrade notes
+- A string `const` now lowers to a literal type in generated SDKs, where it
+  was untyped before, so regenerating an SDK shows diffs for those fields.
+- A `[docs] package` list whose packages set different `features` now works;
+  `paths`, `baseline` and `cpu` must still agree.
+- Executor benches on tokio need the `tokio` feature of `soothfast` in the
+  bench dev-dependency. Nothing else is required.
 <!-- /soothfast:notes -->
+
+### ✨ Features
+
+- Run async benches on a caller-supplied executor (#540)
+- Discriminated unions in the Python and TypeScript SDKs (#542)
+
+### 🐛 Fixes
+
+- Resolve docs settings per package in one check (#541)
 
 ### ⚡ Performance
 
