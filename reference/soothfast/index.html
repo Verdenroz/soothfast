@@ -145,6 +145,11 @@ try { var t = localStorage.getItem("soothfast-theme");
 Measurements and verified claims come from the latest baseline; CI gates them.</p>
 </blockquote>
 <h2 id="soothfast"><code>soothfast</code><a class="anchor" href="#soothfast" aria-label="Link to this section">#</a></h2>
+<h3 id="executor-trait"><code>Executor</code> <sup>trait</sup><a class="anchor" href="#executor-trait" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">trait</span> <span class="tok-ty">Executor</span>
+</code></pre></figure>
+<p>A runtime the adopter supplies to drive async bench workloads, so they can
+use I/O and timers the counting executor cannot service.</p>
 <h3 id="keep-function"><code>keep</code> <sup>function</sup><a class="anchor" href="#keep-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> keep&lt;<span class="tok-ty">T</span>&gt;(value: <span class="tok-ty">T</span>) -&gt; <span class="tok-ty">T</span>
 </code></pre></figure>
@@ -317,6 +322,8 @@ an anchor: it would match every id.</p>
   <ul class="toc-list" id="toc">
   
     <li><a class="toc-l2" href="#soothfast">soothfast</a></li>
+  
+    <li><a class="toc-l3" href="#executor-trait">Executor trait</a></li>
   
     <li><a class="toc-l3" href="#keep-function">keep function</a></li>
   

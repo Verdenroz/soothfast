@@ -205,6 +205,65 @@ so a change to the private function it runs moves that item and no other.</p>
 not count toward <code>coverage measure</code>'s denominator, and it is not warned about
 as long as its first module exists in the package's <code>src/</code> (a file, a
 directory with <code>mod.rs</code>, or an inline module in the crate root).</p>
+<h2 id="async-benches-on-your-own-runtime">Async benches on your own runtime<a class="anchor" href="#async-benches-on-your-own-runtime" aria-label="Link to this section">#</a></h2>
+<p>An <code>async fn</code> bench with no <code>executor</code> runs on a small built-in executor that
+counts polls and wakes. It has no reactor or timers, so a future that does
+network I/O or sleeps never completes there. Name a runtime with <code>executor</code>
+instead: a <code>fn() -&gt; E</code> where <code>E</code> implements <code>soothfast::Executor</code>. Each
+measurement pass (every walltime sample, perfcnt round, alloc run and sweep
+size) calls it and the setup again, outside the measured region, so keep both
+cheap and safe to repeat. Every iteration's future runs through
+<code>E::block_on</code>. Polls and wakes are not counted for these items.</p>
+<p><code>impl Executor for tokio::runtime::Runtime</code> is behind the <code>tokio</code> feature of
+<code>soothfast</code>, off by default so the dependency tree does not change. Anything
+else implements the one-method trait itself.</p>
+<p>With an executor, <code>setup</code> and <code>setup_sized</code> may be <code>async fn</code>s. They run on
+the same executor, outside measurement, so a client or mock server that needs
+a runtime context can be built there. Any setup output that implements
+<code>Future</code> is awaited, so a setup cannot hand the bench a future as data. A
+service bench against a stand-in upstream looks like this:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">fn</span> <span class="tok-fn">runtime</span>() -&gt; tokio::runtime::<span class="tok-ty">Runtime</span> {
+    tokio::runtime::<span class="tok-ty">Builder</span>::<span class="tok-fn">new_current_thread</span>()
+        .<span class="tok-fn">enable_all</span>()
+        .<span class="tok-fn">build</span>()
+        .<span class="tok-fn">unwrap</span>()
+}
+
+<span class="tok-kw">struct</span> <span class="tok-ty">Fixture</span> {
+    upstream: mockito::<span class="tok-ty">ServerGuard</span>,
+    cache: <span class="tok-ty">Cache</span>,
+}
+
+<span class="tok-kw">async</span> <span class="tok-kw">fn</span> <span class="tok-fn">fixture</span>() -&gt; <span class="tok-ty">Fixture</span> {
+    <span class="tok-kw">let</span> <span class="tok-kw">mut</span> upstream = mockito::<span class="tok-ty">Server</span>::<span class="tok-fn">new_async</span>().<span class="tok-kw">await</span>;
+    upstream.<span class="tok-fn">mock</span>(<span class="tok-str">&quot;GET&quot;</span>, <span class="tok-str">&quot;/series/GDP&quot;</span>).<span class="tok-fn">with_body</span>(<span class="tok-ty">SERIES_JSON</span>).<span class="tok-fn">create_async</span>().<span class="tok-kw">await</span>;
+    <span class="tok-fn">set_base_url</span>(&amp;upstream.<span class="tok-fn">url</span>());
+    <span class="tok-ty">Fixture</span> { upstream, cache: <span class="tok-ty">Cache</span>::<span class="tok-fn">new</span>(<span class="tok-ty">None</span>) }
+}
+
+<span class="tok-mac">#[soothfast::bench(group = &quot;services&quot;, executor = runtime, setup = fixture)]</span>
+<span class="tok-kw">async</span> <span class="tok-kw">fn</span> <span class="tok-fn">get_series_bench</span>(fx: &amp;<span class="tok-ty">Fixture</span>) {
+    soothfast::<span class="tok-fn">keep</span>(<span class="tok-fn">get_series</span>(&amp;fx.cache, <span class="tok-str">&quot;GDP&quot;</span>).<span class="tok-kw">await</span>.<span class="tok-fn">unwrap</span>());
+}
+</code></pre></figure>
+<p><code>executor</code> works with <code>sizes(...)</code> and <code>complexity</code> too, and on
+<code>#[measured]</code> for a zero-argument <code>async fn</code>. It is an error on a sync fn.</p>
+<h3 id="what-each-backend-counts">What each backend counts<a class="anchor" href="#what-each-backend-counts" aria-label="Link to this section">#</a></h3>
+<p>Work on other threads is not counted the same way by every backend. A
+loopback server thread and tokio's blocking pool are the two common cases.</p>
+<ul>
+<li><code>alloc</code> counts into process-wide atomics, so allocations on any thread land in the item, including the mock server's.</li>
+<li><code>perfcnt</code> opens its counters for the measuring thread only, so other threads' instructions and cycles are not counted.</li>
+<li><code>callgrind</code> runs valgrind without <code>--separate-threads</code>, so one dump sums every thread and the server's instructions are counted. This follows from the invocation; it was not measured on a host where valgrind runs.</li>
+<li><code>walltime</code> is elapsed time on the measuring thread, so it includes the time spent waiting on the server, but not the server's CPU work as such.</li>
+</ul>
+<p>Use a <code>current_thread</code> runtime. Either flavor polls the bench future on the
+measuring thread, but a multi-thread runtime runs spawned tasks and its I/O
+and timer drivers on workers, where <code>perfcnt</code> cannot see them. Keep the
+stand-in cheap and constant: its allocations and instructions count toward
+the item under <code>alloc</code> and <code>callgrind</code>, and its latency counts under
+<code>walltime</code>. To see what an upstream adds, bench the same call against a
+variant whose handler does a known amount of extra work and compare.</p>
 <h2 id="what-callgrind-s-counts-depend-on">What callgrind's counts depend on<a class="anchor" href="#what-callgrind-s-counts-depend-on" aria-label="Link to this section">#</a></h2>
 <p>callgrind counts are exact for a given binary, valgrind and libc, but not for
 a given binary alone. glibc picks its <code>memcpy</code>, <code>strlen</code> and <code>memchr</code> variants
@@ -411,6 +470,10 @@ that keeps every page on this site honest.</p>
     <li><a class="toc-l2" href="#from-annotation-to-measurement">From annotation to measurement</a></li>
   
     <li><a class="toc-l2" href="#benches-inside-the-crate">Benches inside the crate</a></li>
+  
+    <li><a class="toc-l2" href="#async-benches-on-your-own-runtime">Async benches on your own runtime</a></li>
+  
+    <li><a class="toc-l3" href="#what-each-backend-counts">What each backend counts</a></li>
   
     <li><a class="toc-l2" href="#what-callgrind-s-counts-depend-on">What callgrind&#39;s counts depend on</a></li>
   

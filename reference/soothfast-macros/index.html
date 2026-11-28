@@ -156,6 +156,8 @@ fn bench_sorted(input: &amp;[f64]) { soothfast::keep(mylib::sorted(input)); }
 <p><code>setup = f</code> feeds <code>f() -&gt; T</code> as <code>&amp;T</code>; <code>setup_sized = f</code> feeds <code>f(n) -&gt; T</code>
 and enables <code>sizes(...)</code>/<code>complexity</code> sweeps (the plain measurement uses
 the largest size). Setup always runs outside the measured region.
+<code>executor = f</code> runs an <code>async fn</code> bench on the <code>soothfast::Executor</code> that
+<code>f()</code> returns, where <code>setup</code>/<code>setup_sized</code> may be <code>async fn</code>s too.
 Route constant inputs through <code>soothfast::keep</code> or LLVM const-folds them.</p>
 <h3 id="fixture-proc-macro"><code>fixture</code> <sup>proc_macro</sup><a class="anchor" href="#fixture-proc-macro" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">fixture</span>(attr: <span class="tok-ty">TokenStream</span>, item: <span class="tok-ty">TokenStream</span>) -&gt; <span class="tok-ty">TokenStream</span>
@@ -169,7 +171,8 @@ is referenced by name from <code>#[bench(setup = ...)]</code> / <code>setup_size
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>#[soothfast::measured(group = &quot;checksums&quot;, alloc = 0, p99 = &quot;100us&quot;)]
 pub fn lcg_checksum() -&gt; u64 { ... }
 </code></pre></figure>
-<p>Functions with parameters need <code>#[soothfast::bench(setup = ...)]</code> instead.</p>
+<p>Functions with parameters need <code>#[soothfast::bench(setup = ...)]</code> instead.
+An <code>async fn</code> takes <code>executor = f</code> as <code>#[bench]</code> does.</p>
 <h3 id="mock-seam-proc-macro"><code>mock_seam</code> <sup>proc_macro</sup><a class="anchor" href="#mock-seam-proc-macro" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">mock_seam</span>(attr: <span class="tok-ty">TokenStream</span>, item: <span class="tok-ty">TokenStream</span>) -&gt; <span class="tok-ty">TokenStream</span>
 </code></pre></figure>
