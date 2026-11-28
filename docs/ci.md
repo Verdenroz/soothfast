@@ -1233,9 +1233,9 @@ the flag.
 `ci docs` is the `Docs check` job. It checks the `[docs] package`s, or the
 `-p` ones given, in one `docs check` over all the markdown, building each
 package's rustdoc surface with the `features` that package resolves in
-`soothfast.toml`. The packages' other `docs` keys (`paths`, `baseline`)
-apply to the whole check, so `docs check` refuses packages that set them
-differently and names the key; coverage minimums are not read and may differ.
+`soothfast.toml`. `paths` and `baseline` apply to the whole check, so
+`docs check` refuses packages that set them differently and names the key.
+`target` and the coverage minimums may differ between packages.
 On a pull request `docs check` compares against `origin/` the base branch, and
 elsewhere in a run against `HEAD^`; a local run compares against nothing.
 `--baselines DIR` is where the gate legs' baselines were downloaded, one
