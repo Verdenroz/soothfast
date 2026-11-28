@@ -97,9 +97,9 @@ else implements the one-method trait itself.
 
 With an executor, `setup` and `setup_sized` may be `async fn`s. They run on
 the same executor, outside measurement, so a client or mock server that needs
-a runtime context can be built there. A setup whose output implements
-`Future` is awaited, so a setup cannot hand the bench a future as data. This is the shape of a service bench
-against a stand-in upstream:
+a runtime context can be built there. Any setup output that implements
+`Future` is awaited, so a setup cannot hand the bench a future as data. A
+service bench against a stand-in upstream looks like this:
 
 ```rust ignore
 fn runtime() -> tokio::runtime::Runtime {
@@ -145,15 +145,13 @@ loopback server thread and tokio's blocking pool are the two common cases.
 - `walltime` is elapsed time on the measuring thread, so it includes the
   time spent waiting on the server, but not the server's CPU work as such.
 
-Use a `current_thread` runtime. `block_on` polls the bench future on the
-measuring thread under either flavor, but a multi-thread runtime moves spawned
-tasks and its I/O and timer drivers onto workers `perfcnt` cannot see; a
-`current_thread` runtime keeps all of the client's work where `perfcnt` counts
-it. Keep the stand-in cheap and
-constant: its allocations and instructions are part of the item under `alloc`
-and `callgrind`, and its latency is part of `walltime`. To check what a
-given upstream adds, bench the same call against a variant whose handler does
-a known amount of extra work and compare the counts.
+Use a `current_thread` runtime. Either flavor polls the bench future on the
+measuring thread, but a multi-thread runtime runs spawned tasks and its I/O
+and timer drivers on workers, where `perfcnt` cannot see them. Keep the
+stand-in cheap and constant: its allocations and instructions count toward
+the item under `alloc` and `callgrind`, and its latency counts under
+`walltime`. To see what an upstream adds, bench the same call against a
+variant whose handler does a known amount of extra work and compare.
 
 ## What callgrind's counts depend on
 
