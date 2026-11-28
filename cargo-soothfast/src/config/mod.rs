@@ -50,6 +50,14 @@ pub fn defaults(pkgs: &[String], group: Group) -> Result<Settings, String> {
     Config::load(&invoke::project_root())?.resolve(pkgs, group)
 }
 
+/// [`defaults`] for a command that settles `features` per package, as
+/// [`Config::resolve_shared`] does.
+pub fn defaults_shared(pkgs: &[String], group: Group) -> Result<Settings, String> {
+    Ok(Config::load(&invoke::project_root())?
+        .resolve_shared(pkgs, group)?
+        .0)
+}
+
 /// [`defaults`] of `pkgs` for the `coverage` commands.
 pub fn coverage_defaults(pkgs: &[String]) -> Result<Settings, String> {
     Config::load(&invoke::project_root())?.resolve_coverage(pkgs)

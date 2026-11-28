@@ -261,8 +261,6 @@ fn rows(
     check: bool,
     executed: bool,
 ) -> Result<Vec<Row>, Failure> {
-    let defaults = config::coverage_defaults(pkgs).map_err(|e| (2, e))?;
-    let features = features.or(defaults.features);
     let targets = coverage::lang_targets(pkgs, dirs, lang).map_err(|e| (2, e))?;
     let mut rows = Vec::new();
     for target in &targets {
@@ -281,6 +279,8 @@ fn rows(
     let marked = marker_targets(&invoke::project_root());
     let config = Config::load(&invoke::project_root()).map_err(|e| (2, e))?;
     for pkg in pkgs {
+        let own = config::coverage_defaults(std::slice::from_ref(pkg)).map_err(|e| (2, e))?;
+        let features = features.clone().or(own.features);
         let (surf, _, root) =
             docs_support::surface_in(pkg, None, features.as_deref()).map_err(|e| (1, e))?;
         let may_build = !check || needs_bench(pkg).map_err(|e| (2, e))?;
