@@ -22,6 +22,7 @@ pub fn lower(ops: &[Operation], opts: &SdkOptions, kind: SdkKind) -> Result<Sdk,
         kind,
         notes: Vec::new(),
         taken: components.keys().cloned().collect(),
+        components: components.clone(),
         variants: Vec::new(),
     };
 
@@ -61,6 +62,8 @@ struct Cx {
     notes: Vec<String>,
     /// Every model name in use, components and synthesized variants alike.
     taken: BTreeSet<String>,
+    /// The merged component schemas, for arms that point at one.
+    components: BTreeMap<String, Value>,
     /// Models synthesized for inline arms of tagged unions.
     variants: Vec<Model>,
 }
@@ -271,7 +274,7 @@ fn ty_of(schema: &Value, cx: &mut Cx, at: &str) -> Ty {
         return Ty::Named(name.to_string());
     }
     if let Some(arms) = schema["oneOf"].as_array() {
-        if let Some(tagged) = tagged_of(arms, cx, at) {
+        if let Some(tagged) = tagged_of(schema, arms, cx, at) {
             return tagged;
         }
         return Ty::Union(arms.iter().map(|a| ty_of(a, cx, at)).collect());
@@ -341,44 +344,58 @@ fn is_annotation_only(schema: &Value) -> bool {
 }
 
 /// A `oneOf` whose every arm names itself with a distinct string `const` on
-/// one shared property: an inline object carrying the tag, or an `allOf` of
-/// a tag-only object and a `$ref` payload.
-fn tagged_of(arms: &[Value], cx: &mut Cx, at: &str) -> Option<Ty> {
-    let parsed: Vec<Arm> = arms.iter().map(arm_of).collect::<Option<_>>()?;
-    let tag = *parsed.first()?.consts.keys().find(|tag| {
-        let mut seen = BTreeSet::new();
-        parsed
-            .iter()
-            .all(|a| a.consts.get(*tag).is_some_and(|v| seen.insert(*v)))
-    })?;
+/// one shared property: an inline object carrying the tag, an `allOf` of a
+/// tag-only object and a `$ref` payload, or a `$ref` to a component that
+/// carries the tag. An OpenAPI `discriminator` picks the property when it
+/// names one every arm has.
+fn tagged_of(schema: &Value, arms: &[Value], cx: &mut Cx, at: &str) -> Option<Ty> {
+    let parsed: Vec<Arm> = arms
+        .iter()
+        .map(|a| arm_of(a, &cx.components))
+        .collect::<Option<_>>()?;
+    let hint = schema["discriminator"]["propertyName"].as_str();
+    let tag = hint
+        .into_iter()
+        .chain(parsed.first()?.consts.keys().map(String::as_str))
+        .find(|tag| {
+            let mut seen = BTreeSet::new();
+            parsed
+                .iter()
+                .all(|a| a.consts.get(*tag).is_some_and(|v| seen.insert(v)))
+        })?
+        .to_string();
 
     let lowered = parsed
         .iter()
         .map(|arm| {
-            let value = arm.consts[tag];
+            let value = &arm.consts[&tag];
             let ty = match arm.payload {
                 Some(payload) => ty_of(payload, cx, at),
                 None => Ty::Named(variant_model(arm.schema, value, cx, at)?),
             };
-            Some((value.to_string(), ty))
+            Some((value.clone(), ty))
         })
         .collect::<Option<_>>()?;
-    Some(Ty::Tagged {
-        tag: tag.to_string(),
-        arms: lowered,
-    })
+    Some(Ty::Tagged { tag, arms: lowered })
 }
 
 struct Arm<'a> {
     schema: &'a Value,
     /// String-const properties of the arm's tag-bearing object.
-    consts: BTreeMap<&'a str, &'a str>,
-    /// The `$ref` an `allOf` arm composes with its tag; `None` for an
-    /// inline object.
+    consts: BTreeMap<String, String>,
+    /// The `$ref` the arm lowers through; `None` for an inline object.
     payload: Option<&'a Value>,
 }
 
-fn arm_of(schema: &Value) -> Option<Arm<'_>> {
+fn arm_of<'a>(schema: &'a Value, components: &BTreeMap<String, Value>) -> Option<Arm<'a>> {
+    if let Some(r) = schema["$ref"].as_str() {
+        let name = r.rsplit('/').next().unwrap_or(r);
+        return Some(Arm {
+            schema,
+            consts: consts_of(components.get(name)?)?,
+            payload: Some(schema),
+        });
+    }
     if let Some([a, b]) = schema["allOf"].as_array().map(Vec::as_slice) {
         let (tag_only, payload) = if b.get("$ref").is_some() {
             (a, b)
@@ -402,11 +419,11 @@ fn arm_of(schema: &Value) -> Option<Arm<'_>> {
     })
 }
 
-fn consts_of(schema: &Value) -> Option<BTreeMap<&str, &str>> {
-    let consts: BTreeMap<&str, &str> = schema["properties"]
+fn consts_of(schema: &Value) -> Option<BTreeMap<String, String>> {
+    let consts: BTreeMap<String, String> = schema["properties"]
         .as_object()?
         .iter()
-        .filter_map(|(k, v)| Some((k.as_str(), v["const"].as_str()?)))
+        .filter_map(|(k, v)| Some((k.clone(), v["const"].as_str()?.to_string())))
         .collect();
     (!consts.is_empty()).then_some(consts)
 }
@@ -419,8 +436,11 @@ fn variant_model(schema: &Value, value: &str, cx: &mut Cx, at: &str) -> Option<S
         crate::naming::pascal(at),
         crate::naming::pascal(value)
     );
+    let base = name.clone();
+    let mut n = 1;
     while !cx.taken.insert(name.clone()) {
-        name.push('_');
+        n += 1;
+        name = format!("{base}{n}");
     }
     let model = model_of(&name, schema, cx.kind, cx)?;
     cx.variants.push(model);
@@ -639,5 +659,74 @@ mod tests {
             json!({ "allOf": [{ "$ref": "#/components/schemas/Earnings" }], "description": "d" }),
         );
         assert_eq!(sdk.methods[0].ok, Ty::Named("Earnings".into()));
+    }
+
+    #[test]
+    fn ref_arms_whose_components_carry_the_tag_are_tagged() {
+        let shape = |kind: &str| {
+            json!({
+                "type": "object",
+                "properties": { "kind": { "const": kind }, "id": { "type": "integer" } },
+            })
+        };
+        let sdk = lowered(
+            &[("Circle", shape("circle")), ("Square", shape("square"))],
+            json!({ "oneOf": [
+                { "$ref": "#/components/schemas/Circle" },
+                { "$ref": "#/components/schemas/Square" },
+            ] }),
+        );
+        assert_eq!(
+            sdk.methods[0].ok,
+            Ty::Tagged {
+                tag: "kind".into(),
+                arms: vec![
+                    ("circle".into(), Ty::Named("Circle".into())),
+                    ("square".into(), Ty::Named("Square".into())),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn a_discriminator_picks_the_tag_among_several_const_properties() {
+        let shape = |kind: &str, version: &str| {
+            json!({
+                "type": "object",
+                "properties": { "kind": { "const": kind }, "v": { "const": version } },
+            })
+        };
+        let sdk = lowered(
+            &[("A", shape("a", "1")), ("B", shape("b", "2"))],
+            json!({
+                "oneOf": [
+                    { "$ref": "#/components/schemas/A" },
+                    { "$ref": "#/components/schemas/B" },
+                ],
+                "discriminator": { "propertyName": "v" },
+            }),
+        );
+        let Ty::Tagged { tag, arms } = &sdk.methods[0].ok else {
+            panic!("expected a tagged union");
+        };
+        assert_eq!(tag, "v");
+        assert_eq!(arms[0].0, "1");
+    }
+
+    #[test]
+    fn colliding_variant_names_take_a_numeric_suffix() {
+        let arm =
+            |kind: &str| json!({ "type": "object", "properties": { "kind": { "const": kind } } });
+        let sdk = lowered(
+            &[(
+                "GetEvent200Circle",
+                json!({ "type": "object", "properties": {} }),
+            )],
+            json!({ "oneOf": [arm("circle"), arm("square")] }),
+        );
+        let Ty::Tagged { arms, .. } = &sdk.methods[0].ok else {
+            panic!("expected a tagged union");
+        };
+        assert_eq!(arms[0].1, Ty::Named("GetEvent200Circle2".into()));
     }
 }
