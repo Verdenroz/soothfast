@@ -169,6 +169,8 @@ jobs:
             mkdir -p .soothfast/lanes
             cp -rn .soothfast-lanes-own/. .soothfast/lanes/ || true
           fi
+      - name: Size the lane store
+        run: du -sh .soothfast/lanes 2>/dev/null || echo "no lane store"
       # The jobs install a floating stable toolchain, which the plan cannot see; the
       # checksum of its manifest names it. An empty value keeps every Rust lane running.
       - name: Name the soothfast revision and the stable channel
@@ -187,6 +189,7 @@ jobs:
           # A push records every item in its first leg; the others would only set up.
           FIRST_ONLY: ${{ github.event_name != 'pull_request' && 'true' || '' }}
           SETTLED: ${{ runner.temp }}/settled
+          CARRIED_BASELINES: ${{ runner.temp }}/carried-baselines
           # A pull request and a default-branch push list their lanes for storing.
           LANES: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && format('{0}/lanes', runner.temp) || '' }}
           SOOTHFAST_REV: ${{ steps.stamps.outputs.rev }}
@@ -200,7 +203,7 @@ jobs:
           cargo soothfast plan --github --java "$JAVA" --node "$NODE" \
             --shard "$SHARD" ${FIRST_ONLY:+--first-shard-only} \
             --results "$SETTLED" --soothfast-rev "$SOOTHFAST_REV" --rust-stable "$RUST_STABLE" \
-            ${LANES:+--lanes "$LANES"} \
+            ${LANES:+--lanes "$LANES"} --baselines "$CARRIED_BASELINES" \
             --pr-author "$PR_AUTHOR" --head-ref "$HEAD_REF" --head-repo "$HEAD_REPO" \
             --repo "$GITHUB_REPOSITORY" --verified-commits "$VERIFIED" \
             ${BASE_REF:+--base "origin/$BASE_REF"} ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
@@ -216,6 +219,13 @@ jobs:
         with:
           name: soothfast-result-test-settled-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/settled
+          if-no-files-found: ignore
+      # The docs job merges these with the gate legs' measurements; a gate it carries measured nothing this run.
+      - name: Upload the baselines of carried gates
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-baseline-carried-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/carried-baselines
           if-no-files-found: ignore
       - name: Upload the lanes a run may store
         if: >-

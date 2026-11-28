@@ -42,6 +42,8 @@ struct Args {
     rust_stable: String,
     /// Where to write the fingerprints of the lanes a run may record.
     lanes: Option<PathBuf>,
+    /// Where to write the baselines of the gates a run carries for the docs job.
+    baselines: Option<PathBuf>,
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
@@ -74,6 +76,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
             }
             "--results" => out.results = Some(PathBuf::from(value)),
             "--lanes" => out.lanes = Some(PathBuf::from(value)),
+            "--baselines" => out.baselines = Some(PathBuf::from(value)),
             "--soothfast-rev" => out.rev = value,
             "--rust-stable" => out.rust_stable = value,
             "--shard" => match value.parse() {
@@ -135,6 +138,11 @@ pub fn run(args: &[String]) -> i32 {
     }
     if let Some(dir) = &args.results
         && let Err(e) = plan.write_settled(dir)
+    {
+        return err(&e);
+    }
+    if let Some(dir) = &args.baselines
+        && let Err(e) = plan.write_baselines(dir)
     {
         return err(&e);
     }

@@ -83,7 +83,7 @@ fn delta<'a>(
 
 fn inputs<'a>(files: &'a Files, repo: &TempRepo) -> Inputs<'a> {
     let test = TestConfig {
-        ignore: vec!["docs/data.txt".into()],
+        ignore: vec!["docs/data.txt".into(), "docs/page.md".into()],
         ..TestConfig::default()
     };
     let setup = Setup {
@@ -97,6 +97,16 @@ fn inputs<'a>(files: &'a Files, repo: &TempRepo) -> Inputs<'a> {
 }
 
 fn pass_all(p: &Plan, repo: &TempRepo, site: Option<&Site>) -> (TempDir, Store) {
+    pass_all_with(p, repo, site, &|_| None)
+}
+
+/// [`pass_all`], each gate lane's pass holding the baseline `baseline` gives.
+fn pass_all_with(
+    p: &Plan,
+    repo: &TempRepo,
+    site: Option<&Site>,
+    baseline: &dyn Fn(&str) -> Option<Value>,
+) -> (TempDir, Store) {
     let tag = repo.root.file_name().unwrap().to_string_lossy().to_string();
     let dir = TempDir::new(&format!("{tag}-store"));
     std::fs::create_dir_all(&dir).unwrap();
@@ -105,7 +115,7 @@ fn pass_all(p: &Plan, repo: &TempRepo, site: Option<&Site>) -> (TempDir, Store) 
         let pass = Pass {
             commit: PASSED.into(),
             run: "1".into(),
-            baseline: None,
+            baseline: baseline(&u.lane.id),
         };
         store.record(&u.lane.id, &u.key, &pass);
     }
@@ -127,7 +137,12 @@ fn pull_on(
     p.changed = Some(changed.iter().map(|c| c.to_string()).collect());
     let files = Files::read(&repo.root).unwrap();
     let inputs = inputs(&files, repo);
-    p.decide(&inputs, site, Some(store), &delta(&inputs, changed, base));
+    let claims = p
+        .docs
+        .then(|| coverage::read(&repo.root, files.ids()))
+        .flatten();
+    let delta = delta(&inputs, changed, base);
+    p.decide(&inputs, site, Some(store), &delta, claims.as_deref());
 }
 
 /// The pass a pull request head stores for its lanes under its own deltas.
@@ -267,8 +282,27 @@ fn documented(checks: &[(&'static str, Option<&str>)]) -> Plan {
     p
 }
 
+/// A stored baseline of `lane` that measures `core::a` or `cli::x`, or the
+/// import lane's `node::t`, on `perfcnt.instructions`.
+fn measured(lane: &str) -> Option<Value> {
+    let (package, id) = match lane {
+        "rust:core" => ("core", "core::a"),
+        "rust:cli" => ("cli", "cli::x"),
+        "import:node" => return Some(json!({"items": {"node::t": {"walltime": {"p99_ns": 5}}}})),
+        _ => return None,
+    };
+    Some(json!({
+        "owners": {package: [id]},
+        "items": {id: {"perfcnt": {"instructions": 5}}},
+    }))
+}
+
+fn claim(expr: &str) -> String {
+    format!("<!-- soothfast:claim {expr} -->\n")
+}
+
 #[test]
-fn the_gates_and_the_docs_carry_together_or_not_at_all() {
+fn the_gates_and_the_docs_carry_when_nothing_they_read_changed() {
     let repo = repo("carry-coupled");
     let mut p = documented(&[]);
     let (_dir, store) = pass_all(&p, &repo, None);
@@ -280,24 +314,104 @@ fn the_gates_and_the_docs_carry_together_or_not_at_all() {
     let out = p.outputs();
     assert!(out.contains("packages=\ndocs=false\n"), "{out}");
     assert!(out.contains("docs_binds_rust=false\n"), "{out}");
-
-    let mut p = documented(&[]);
-    repo.write("docs/page.md", "2");
-    pull(&mut p, &repo, &store, None, &["docs/page.md"]);
-    assert!(p.carried.is_empty());
-    let out = p.outputs();
-    assert!(out.contains("packages=core cli\ndocs=true\n"), "{out}");
 }
 
 #[test]
-fn a_gate_that_cannot_carry_keeps_the_docs_and_every_other_gate() {
-    let repo = repo("carry-coupled-gate");
+fn a_markdown_change_carries_the_gates_that_hold_a_baseline() {
+    let repo = repo("carry-gate-alone");
+    let p = documented(&[]);
+    let (_dir, store) = pass_all_with(&p, &repo, None, &measured);
+    repo.write("docs/page.md", &claim("core::a.perfcnt.instructions < 10"));
+    let mut p = documented(&[]);
+    pull(&mut p, &repo, &store, None, &["docs/page.md"]);
+    assert_eq!(carried(&p), ["rust:core", "rust:cli", "import:node"]);
+    let out = p.outputs();
+    assert!(out.contains("packages=\ndocs=true\n"), "{out}");
+    let slice = p.carried.iter().find(|c| c.lane == "rust:core").unwrap();
+    assert!(slice.baseline.is_some());
+}
+
+#[test]
+fn a_gate_whose_pass_holds_no_baseline_runs_while_the_docs_job_does() {
+    let repo = repo("carry-no-baseline");
+    let mut p = documented(&[]);
+    let (_dir, store) = pass_all_with(&p, &repo, None, &|lane| {
+        (lane != "rust:cli").then(|| measured(lane)).flatten()
+    });
+    repo.write("docs/page.md", "2");
+    pull(&mut p, &repo, &store, None, &["docs/page.md"]);
+    assert_eq!(carried(&p), ["rust:core", "import:node"]);
+    assert!(p.outputs().contains("packages=cli\ndocs=true\n"));
+
     let mut p = documented(&[]);
     let (_dir, store) = pass_all(&p, &repo, None);
-    repo.write("cli/src/lib.rs", "2");
-    pull(&mut p, &repo, &store, None, &["cli/src/lib.rs"]);
+    repo.write("docs/page.md", "3");
+    pull(&mut p, &repo, &store, None, &["docs/page.md"]);
     assert!(p.carried.is_empty());
     assert!(p.outputs().contains("packages=core cli\ndocs=true\n"));
+}
+
+#[test]
+fn a_gate_runs_when_a_claim_reads_a_metric_its_baseline_lacks() {
+    let repo = repo("carry-claim-coverage");
+    let p = documented(&[]);
+    let (_dir, store) = pass_all_with(&p, &repo, None, &measured);
+    for (expr, core_carries) in [
+        ("core::a.perfcnt.instructions < 10", true),
+        ("core::a.walltime.p99 < 10", false),
+        ("core::a.perfcnt.cycles < 10", false),
+        (
+            "core::a.perfcnt.instructions - core::a.walltime.p99 < 10",
+            false,
+        ),
+        ("other::z.perfcnt.instructions < 10", true),
+    ] {
+        repo.write("docs/page.md", &claim(expr));
+        let mut p = documented(&[]);
+        pull(&mut p, &repo, &store, None, &["docs/page.md"]);
+        assert_eq!(p.carries("rust:core"), core_carries, "{expr}");
+        assert!(p.carries("rust:cli"), "{expr}");
+    }
+}
+
+#[test]
+fn an_unreadable_claim_set_keeps_every_gate_running() {
+    let repo = repo("carry-claims-unread");
+    let p = documented(&[]);
+    let (_dir, store) = pass_all_with(&p, &repo, None, &measured);
+    repo.write("docs/page.md", "```rust\nunclosed\n");
+    let mut p = documented(&[]);
+    pull(&mut p, &repo, &store, None, &["docs/page.md"]);
+    assert!(p.carried.is_empty());
+}
+
+#[test]
+fn the_carried_slices_are_written_with_the_package_they_stand_for() {
+    let repo = repo("carry-write-baselines");
+    let p = documented(&[]);
+    let (_dir, store) = pass_all_with(&p, &repo, None, &measured);
+    repo.write("docs/page.md", "2");
+    let mut p = documented(&[]);
+    pull(&mut p, &repo, &store, None, &["docs/page.md"]);
+    let out = TempDir::new("carry-write-baselines-out");
+    p.write_baselines(&out).unwrap();
+    let read = |f: &str| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(out.join(f)).unwrap()).unwrap()
+    };
+    assert_eq!(read("rust-core.json")["carried"], json!(["core"]));
+    assert!(read("import-node.json").get("carried").is_none());
+    assert!(read("import-node.json")["items"].get("node::t").is_some());
+}
+
+#[test]
+fn a_gate_that_cannot_carry_runs_while_the_others_carry_on_their_own() {
+    let repo = repo("carry-coupled-gate");
+    let mut p = documented(&[]);
+    let (_dir, store) = pass_all_with(&p, &repo, None, &measured);
+    repo.write("cli/src/lib.rs", "2");
+    pull(&mut p, &repo, &store, None, &["cli/src/lib.rs"]);
+    assert_eq!(carried(&p), ["rust:core", "import:node"]);
+    assert!(p.outputs().contains("packages=cli\ndocs=true\n"));
 }
 
 #[test]
@@ -358,9 +472,13 @@ fn the_escape_hatch_a_landing_a_push_and_an_unknown_diff_run_every_lane() {
 
     let mut p = lanes();
     let files = Files::read(&repo.root).unwrap();
-    p.decide(&inputs(&files, &repo), None, Some(&store), &|_| {
-        Some(String::new())
-    });
+    p.decide(
+        &inputs(&files, &repo),
+        None,
+        Some(&store),
+        &|_| Some(String::new()),
+        None,
+    );
     assert!(p.carried.is_empty());
     assert_eq!(p.recorded.len(), 3);
 }
@@ -386,7 +504,13 @@ fn lanes_json_names_each_lane_and_the_results_a_run_must_leave() {
     let mut p = checked(&[("spec", Some("core"))]);
     p.shards = 2;
     let files = Files::read(&repo.root).unwrap();
-    p.decide(&inputs(&files, &repo), None, None, &|_| Some(String::new()));
+    p.decide(
+        &inputs(&files, &repo),
+        None,
+        None,
+        &|_| Some(String::new()),
+        None,
+    );
     let out = TempDir::new("plan-carry-json");
     p.write_lanes(&out).unwrap();
     let doc: Value =
@@ -420,10 +544,13 @@ fn the_lane_flags_are_parsed() {
         "1.90",
         "--lanes",
         "out",
+        "--baselines",
+        "carried",
     ];
     let a = crate::plan::parse_args(&argv(&flags)).unwrap();
     assert_eq!((a.rev.as_str(), a.rust_stable.as_str()), ("abc", "1.90"));
     assert_eq!(a.lanes.as_deref(), Some(Path::new("out")));
+    assert_eq!(a.baselines.as_deref(), Some(Path::new("carried")));
     let none = crate::plan::parse_args(&argv(&[])).unwrap();
     assert!(none.rev.is_empty() && none.lanes.is_none());
 }
@@ -512,7 +639,13 @@ fn the_recorded_key_of_a_touched_lane_differs_from_the_default_branch_one() {
     };
     let mut q = lanes();
     let files = Files::read(&repo.root).unwrap();
-    q.decide(&inputs(&files, &repo), None, None, &|_| Some(String::new()));
+    q.decide(
+        &inputs(&files, &repo),
+        None,
+        None,
+        &|_| Some(String::new()),
+        None,
+    );
     assert_ne!(key(&p, "rust:cli"), key(&q, "rust:cli"));
     assert_eq!(key(&p, "rust:core"), key(&q, "rust:core"));
 }

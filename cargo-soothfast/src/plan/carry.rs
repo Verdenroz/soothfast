@@ -12,15 +12,18 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use soothfast_docs::claims::Claim;
+
 use serde_json::{Value, json};
 
 use super::{Plan, names};
+use crate::baseline_merge::CARRIED_KEY;
 use crate::config::Config;
 use crate::invoke;
 use crate::lanes::delta::base_delta;
 use crate::lanes::graph::Graph;
 use crate::lanes::inputs::{Inputs, Lane, Reads, Setup};
-use crate::lanes::store::{Store, key};
+use crate::lanes::store::{Pass, Store, key};
 use crate::lanes::tool;
 use crate::test::project::Files;
 use crate::verdict::write_carried;
@@ -48,19 +51,19 @@ struct Unit {
     shown: Vec<Shown>,
 }
 
-/// The lanes of a plan, and whether every one that gates or feeds the docs
-/// job has a fingerprint.
+/// The lanes of a plan that have a fingerprint.
 struct Units {
     all: Vec<Unit>,
-    complete: bool,
 }
 
-/// A lane whose job the plan drops, and the commit that passed it.
+/// A lane whose job the plan drops, the commit that passed it, and, for a
+/// gate the docs job still reads, what it measured.
 #[derive(Debug, PartialEq)]
 pub(super) struct Carried {
     pub lane: String,
     pub commit: String,
     shown: Vec<Shown>,
+    baseline: Option<Value>,
 }
 
 /// A lane's fingerprint key and the results a default-branch run must leave
@@ -137,6 +140,10 @@ impl Plan {
             return;
         };
         let site = Site::read(root, &config);
+        let claims = self
+            .docs
+            .then(|| coverage::read(root, files.ids()))
+            .flatten();
         let merge_base = stamps
             .base
             .as_deref()
@@ -153,15 +160,24 @@ impl Plan {
             }
             base_delta(root, merge_base.as_deref()?, &paths)
         };
-        self.decide(&inputs, site.as_ref(), Store::open().as_ref(), &delta);
+        self.decide(
+            &inputs,
+            site.as_ref(),
+            Store::open().as_ref(),
+            &delta,
+            claims.as_deref(),
+        );
     }
 
+    /// A gate lane carries on its own key. While the docs job still runs, it
+    /// also needs a stored baseline that measures every claim of its items.
     fn decide(
         &mut self,
         inputs: &Inputs,
         site: Option<&Site>,
         store: Option<&Store>,
         delta: Delta,
+        claims: Option<&[Claim]>,
     ) {
         let units = self.units(inputs, site, delta);
         self.recorded = units
@@ -180,27 +196,34 @@ impl Plan {
         if self.landing || self.test_all() {
             return;
         }
-        let hit = |u: &Unit| store.lookup(&u.lane.id, &u.key);
-        let coupled = |u: &Unit| matches!(u.kind, "rust" | "import" | "docs");
-        let found: Vec<(&Unit, Option<String>)> = units
+        let found: Vec<(&Unit, Option<Pass>)> = units
             .all
             .iter()
-            .map(|u| (u, hit(u).map(|pass| pass.commit)))
+            .map(|u| (u, store.lookup(&u.lane.id, &u.key)))
             .collect();
-        let together = units.complete
-            && found
+        let docs_runs = self.docs
+            && !found
                 .iter()
-                .filter(|(u, _)| coupled(u))
-                .all(|(_, commit)| commit.is_some());
-        let carry = |u: &Unit| !self.docs || !coupled(u) || together;
+                .any(|(u, pass)| u.kind == "docs" && pass.is_some());
         self.carried = found
             .into_iter()
-            .filter(|(u, _)| carry(u))
-            .filter_map(|(u, commit)| {
+            .filter_map(|(u, pass)| {
+                let pass = pass?;
+                let gate = matches!(u.kind, "rust" | "import");
+                let baseline = match (docs_runs && gate, pass.baseline) {
+                    (false, _) => None,
+                    (true, Some(b))
+                        if claims.is_some_and(|c| coverage::resolves(&u.lane.id, &b, c)) =>
+                    {
+                        Some(b)
+                    }
+                    (true, _) => return None,
+                };
                 Some(Carried {
                     lane: u.lane.id.clone(),
-                    commit: commit?,
+                    commit: pass.commit,
                     shown: u.shown.clone(),
+                    baseline,
                 })
             })
             .collect();
@@ -246,7 +269,6 @@ impl Plan {
         });
         let docs = self.docs_unit(inputs, delta, base.as_ref(), site);
         let mut all: Vec<Unit> = gates.into_iter().chain(imports).flatten().collect();
-        let complete = gated_ok && (!self.docs || docs.is_some());
         all.extend(docs);
         all.extend(
             self.checks
@@ -254,7 +276,7 @@ impl Plan {
                 .filter(|c| !(self.site_in_docs() && c.kind == "site"))
                 .filter_map(|c| self.check_unit(inputs, delta, c, base.as_ref(), site)),
         );
-        Units { all, complete }
+        Units { all }
     }
 
     /// The docs job, and the site it builds when there is one.
@@ -327,6 +349,27 @@ impl Plan {
         Ok(())
     }
 
+    /// A baseline file in `dir` for each carried gate the docs job reads, which
+    /// `baseline merge` takes beside the legs of this run.
+    pub(super) fn write_baselines(&self, dir: &Path) -> Result<(), String> {
+        for carried in &self.carried {
+            let (Some(baseline), Some((kind, name))) =
+                (&carried.baseline, carried.lane.split_once(':'))
+            else {
+                continue;
+            };
+            let mut doc = baseline.clone();
+            if kind == "rust" {
+                doc[CARRIED_KEY] = json!([name]);
+            }
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            let path = dir.join(format!("{kind}-{name}.json"));
+            std::fs::write(&path, format!("{doc}\n"))
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        Ok(())
+    }
+
     /// `lanes.json` in `dir`: each lane's key and the results that must pass
     /// for the default branch to store it.
     pub(super) fn write_lanes(&self, dir: &Path) -> Result<(), String> {
@@ -359,6 +402,8 @@ fn unit(
         shown,
     })
 }
+
+mod coverage;
 
 #[cfg(test)]
 mod tests;
