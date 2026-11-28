@@ -1136,8 +1136,25 @@ every lane:
 inputs = ["fixtures/**", "Makefile"]
 ```
 
-The `docs` lane reads the gates' baselines, so the `rust:*`, `import:*` and
-`docs` lanes (and the site built with the docs) carry together or not at all.
+A gate lane (`rust:*`, `import:*`) carries on its own key. The `docs` lane,
+with the site built beside it, carries only on its own key too, and its inputs
+include every gate's, so it runs whenever a gate's inputs or a markdown file
+changed. While the docs job runs, it reads the gates' baselines, so a gate it
+would otherwise take from this run's legs carries only when its stored pass
+holds the baseline of that gate and the baseline covers the claims: every
+claim in the head's markdown on an item the lane owns must find its backend
+and metric in it. A pass stored before baselines were kept, a claim the
+baseline lacks, or a markdown file that cannot be scanned keeps that gate
+running, and the docs job then merges its fresh legs with the carried ones.
+
+A markdown-only pull request therefore carries the gates only when no Rust
+lane reads the markdown. A file no package owns, root markdown included, is
+an input of every Rust lane unless `[test] ignore` lists it, so list it.
+
+The lane store is scoped per ref, and a carried baseline never crosses refs:
+a pull request restores only its own ref's passes, its base's and the default
+branch's, and where a key exists in both the base's copy wins.
+
 Tests are not lanes: they keep their own stored passes.
 
 Every lane runs, and nothing is carried, when the run is a push or a

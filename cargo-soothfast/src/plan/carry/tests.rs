@@ -434,7 +434,7 @@ fn the_site_in_the_docs_job_is_carried_with_it() {
 }
 
 #[test]
-fn a_site_with_a_hook_never_carries_and_holds_the_gates_with_it() {
+fn a_site_with_a_hook_never_carries_but_gates_with_baselines_do() {
     let repo = repo("carry-site-hook");
     let hook = Site {
         hook: true,
@@ -445,6 +445,12 @@ fn a_site_with_a_hook_never_carries_and_holds_the_gates_with_it() {
     pull(&mut p, &repo, &store, Some(&hook), &["docs/data.txt"]);
     assert!(p.carried.is_empty());
     assert!(p.outputs().contains("docs=true\n"));
+
+    let mut p = documented(&[("site", None)]);
+    let (_dir, store) = pass_all_with(&p, &repo, Some(&hook), &measured);
+    pull(&mut p, &repo, &store, Some(&hook), &["docs/data.txt"]);
+    assert_eq!(carried(&p), ["rust:core", "rust:cli", "import:node"]);
+    assert!(p.outputs().contains("packages=\ndocs=true\n"));
 }
 
 #[test]
