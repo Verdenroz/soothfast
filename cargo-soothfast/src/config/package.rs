@@ -102,6 +102,32 @@ impl Settings {
         }
     }
 
+    /// The first key whose value differs from `other`'s, by the name its
+    /// table gives it.
+    pub fn differing_key(&self, other: &Settings) -> Option<&'static str> {
+        let Settings {
+            features,
+            target,
+            cpu,
+            baseline,
+            paths,
+            coverage,
+            minimums,
+        } = self;
+        let keys = [
+            ("features", *features != other.features),
+            ("target", *target != other.target),
+            ("cpu", *cpu != other.cpu),
+            ("baseline", *baseline != other.baseline),
+            ("paths", *paths != other.paths),
+            ("coverage", *coverage != other.coverage),
+            ("coverage_min", *minimums != other.minimums),
+        ];
+        keys.into_iter()
+            .find(|(_, differs)| *differs)
+            .map(|(k, _)| k)
+    }
+
     /// These settings, with `lower` supplying every key they leave unset.
     pub fn or(self, lower: Settings) -> Settings {
         Settings {
