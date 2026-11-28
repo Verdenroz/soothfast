@@ -69,6 +69,10 @@ pub(crate) fn annotation(ty: &Ty, prefix: &str) -> String {
             .map(|a| annotation(a, prefix))
             .collect::<Vec<_>>()
             .join(" | "),
+        Ty::Tagged { arms, .. } => annotation(
+            &Ty::Union(arms.iter().map(|(_, t)| t.clone()).collect()),
+            prefix,
+        ),
         Ty::Literal(values) => {
             let quoted: Vec<String> = values.iter().map(|v| format!("{v:?}")).collect();
             format!("typing.Literal[{}]", quoted.join(", "))

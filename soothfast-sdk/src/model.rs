@@ -20,6 +20,12 @@ pub enum Ty {
     Named(String),
     /// `oneOf` arms, matched structurally when decoding.
     Union(Vec<Ty>),
+    /// `oneOf` arms told apart by the string `const` each carries on one
+    /// shared property, in `(tag value, arm type)` order.
+    Tagged {
+        tag: String,
+        arms: Vec<(String, Ty)>,
+    },
     /// A closed set of string values.
     Literal(Vec<String>),
 }

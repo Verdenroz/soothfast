@@ -73,6 +73,10 @@ pub(crate) fn annotation(ty: &Ty, prefix: &str) -> String {
             .map(|a| annotation(a, prefix))
             .collect::<Vec<_>>()
             .join(" | "),
+        Ty::Tagged { arms, .. } => annotation(
+            &Ty::Union(arms.iter().map(|(_, t)| t.clone()).collect()),
+            prefix,
+        ),
         Ty::Literal(values) => values
             .iter()
             .map(|v| naming::string_lit(v))

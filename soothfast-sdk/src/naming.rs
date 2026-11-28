@@ -49,6 +49,22 @@ pub(crate) fn sanitize(wire: &str) -> String {
     out
 }
 
+/// PascalCase a name, splitting on anything that is not alphanumeric:
+/// `getCalendar[200]` → `GetCalendar200`, `market_open` → `MarketOpen`.
+pub(crate) fn pascal(name: &str) -> String {
+    name.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .flat_map(|part| {
+            let mut chars = part.chars();
+            chars
+                .next()
+                .map(|first| first.to_ascii_uppercase())
+                .into_iter()
+                .chain(chars)
+        })
+        .collect()
+}
+
 /// A package name as an environment-variable prefix: `acme-items` →
 /// `ACME_ITEMS`, `@acme/items` → `ACME_ITEMS`.
 pub(crate) fn env_prefix(package: &str) -> String {
@@ -80,6 +96,13 @@ mod tests {
         assert_eq!(env_prefix("@acme/items"), "ACME_ITEMS");
         assert_eq!(env_prefix("finance_query"), "FINANCE_QUERY");
         assert_eq!(env_prefix("-"), "SOOTHFAST");
+    }
+
+    #[test]
+    fn pascal_joins_every_alphanumeric_run() {
+        assert_eq!(pascal("getCalendar[200]"), "GetCalendar200");
+        assert_eq!(pascal("market_open"), "MarketOpen");
+        assert_eq!(pascal("Model.field"), "ModelField");
     }
 
     #[test]
