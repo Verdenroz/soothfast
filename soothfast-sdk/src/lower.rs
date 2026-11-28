@@ -21,7 +21,7 @@ pub fn lower(ops: &[Operation], opts: &SdkOptions, kind: SdkKind) -> Result<Sdk,
     let mut cx = Cx {
         kind,
         notes: Vec::new(),
-        taken: components.keys().cloned().collect(),
+        taken: BTreeSet::new(),
         components: &components,
         variants: Vec::new(),
     };
@@ -41,8 +41,10 @@ pub fn lower(ops: &[Operation], opts: &SdkOptions, kind: SdkKind) -> Result<Sdk,
         .collect::<Result<_, _>>()?;
     methods.sort_by(|a, b| a.operation_id.cmp(&b.operation_id));
 
-    models.append(&mut cx.variants);
-    models.sort_by(|a, b| a.name.cmp(&b.name));
+    if !cx.variants.is_empty() {
+        models.append(&mut cx.variants);
+        models.sort_by(|a, b| a.name.cmp(&b.name));
+    }
 
     let reachable = reachable_names(&methods, &models, &aliases);
     models.retain(|m| reachable.contains(&m.name));
@@ -60,7 +62,7 @@ pub fn lower(ops: &[Operation], opts: &SdkOptions, kind: SdkKind) -> Result<Sdk,
 struct Cx<'a> {
     kind: SdkKind,
     notes: Vec<String>,
-    /// Every model name in use, components and synthesized variants alike.
+    /// Names of synthesized variants; component names are taken too.
     taken: BTreeSet<String>,
     /// The merged component schemas, for arms that point at one.
     components: &'a BTreeMap<String, Value>,
@@ -451,7 +453,7 @@ fn variant_model(schema: &Value, value: &str, cx: &mut Cx, at: &str) -> Option<S
     );
     let mut name = base.clone();
     let mut n = 1;
-    while !cx.taken.insert(name.clone()) {
+    while cx.components.contains_key(&name) || !cx.taken.insert(name.clone()) {
         n += 1;
         name = format!("{base}{n}");
     }
