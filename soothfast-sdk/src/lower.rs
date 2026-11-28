@@ -22,7 +22,7 @@ pub fn lower(ops: &[Operation], opts: &SdkOptions, kind: SdkKind) -> Result<Sdk,
         kind,
         notes: Vec::new(),
         taken: components.keys().cloned().collect(),
-        components: components.clone(),
+        components: &components,
         variants: Vec::new(),
     };
 
@@ -57,13 +57,13 @@ pub fn lower(ops: &[Operation], opts: &SdkOptions, kind: SdkKind) -> Result<Sdk,
 }
 
 /// What lowering accumulates beside the types it returns.
-struct Cx {
+struct Cx<'a> {
     kind: SdkKind,
     notes: Vec<String>,
     /// Every model name in use, components and synthesized variants alike.
     taken: BTreeSet<String>,
     /// The merged component schemas, for arms that point at one.
-    components: BTreeMap<String, Value>,
+    components: &'a BTreeMap<String, Value>,
     /// Models synthesized for inline arms of tagged unions.
     variants: Vec<Model>,
 }
@@ -269,8 +269,7 @@ fn success_of(op: &Operation, cx: &mut Cx) -> (Ty, u16) {
 
 /// Lower one JSON Schema node.
 fn ty_of(schema: &Value, cx: &mut Cx, at: &str) -> Ty {
-    if let Some(r) = schema["$ref"].as_str() {
-        let name = r.rsplit('/').next().unwrap_or(r);
+    if let Some(name) = ref_name(schema) {
         return Ty::Named(name.to_string());
     }
     if let Some(arms) = schema["oneOf"].as_array() {
@@ -280,7 +279,7 @@ fn ty_of(schema: &Value, cx: &mut Cx, at: &str) -> Ty {
         return Ty::Union(arms.iter().map(|a| ty_of(a, cx, at)).collect());
     }
     if let Some(members) = schema["allOf"].as_array()
-        && is_annotation_only(&without_all_of(schema))
+        && has_only_keys(schema, |k| k == "allOf" || is_annotation_key(k))
     {
         let mut substantive = members.iter().filter(|m| !is_annotation_only(m));
         if let (Some(only), None) = (substantive.next(), substantive.next()) {
@@ -338,19 +337,24 @@ fn ty_of(schema: &Value, cx: &mut Cx, at: &str) -> Ty {
     }
 }
 
-fn without_all_of(schema: &Value) -> Value {
-    let mut rest = schema.clone();
-    if let Some(o) = rest.as_object_mut() {
-        o.remove("allOf");
-    }
-    rest
+/// The component name a `$ref` points at.
+fn ref_name(schema: &Value) -> Option<&str> {
+    let r = schema["$ref"].as_str()?;
+    Some(r.rsplit('/').next().unwrap_or(r))
+}
+
+fn is_annotation_key(key: &str) -> bool {
+    matches!(key, "description" | "title" | "default" | "examples")
+}
+
+fn has_only_keys(schema: &Value, allowed: impl Fn(&str) -> bool) -> bool {
+    schema
+        .as_object()
+        .is_some_and(|o| o.keys().all(|k| allowed(k)))
 }
 
 fn is_annotation_only(schema: &Value) -> bool {
-    schema.as_object().is_some_and(|o| {
-        o.keys()
-            .all(|k| matches!(k.as_str(), "description" | "title" | "default" | "examples"))
-    })
+    has_only_keys(schema, is_annotation_key)
 }
 
 /// A `oneOf` whose every arm names itself with a distinct string `const` on
@@ -361,7 +365,7 @@ fn is_annotation_only(schema: &Value) -> bool {
 fn tagged_of(schema: &Value, arms: &[Value], cx: &mut Cx, at: &str) -> Option<Ty> {
     let parsed: Vec<Arm> = arms
         .iter()
-        .map(|a| arm_of(a, &cx.components))
+        .map(|a| arm_of(a, cx.components))
         .collect::<Option<_>>()?;
     let hint = schema["discriminator"]["propertyName"].as_str();
     let tag = hint
@@ -398,8 +402,7 @@ struct Arm<'a> {
 }
 
 fn arm_of<'a>(schema: &'a Value, components: &BTreeMap<String, Value>) -> Option<Arm<'a>> {
-    if let Some(r) = schema["$ref"].as_str() {
-        let name = r.rsplit('/').next().unwrap_or(r);
+    if let Some(name) = ref_name(schema) {
         return Some(Arm {
             schema,
             consts: consts_of(components.get(name)?)?,
@@ -441,12 +444,12 @@ fn consts_of(schema: &Value) -> Option<BTreeMap<String, String>> {
 /// Synthesize the model for an inline arm, named after where the union sits
 /// and the arm's tag value.
 fn variant_model(schema: &Value, value: &str, cx: &mut Cx, at: &str) -> Option<String> {
-    let mut name = format!(
+    let base = format!(
         "{}{}",
         crate::naming::pascal(at),
         crate::naming::pascal(value)
     );
-    let base = name.clone();
+    let mut name = base.clone();
     let mut n = 1;
     while !cx.taken.insert(name.clone()) {
         n += 1;

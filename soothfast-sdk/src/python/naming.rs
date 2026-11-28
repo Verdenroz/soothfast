@@ -1,6 +1,6 @@
 //! Wire names → Python identifiers.
 
-pub(crate) use crate::naming::snake;
+pub(crate) use crate::naming::{snake, string_lit};
 
 /// snake_case plus keyword escaping, for attribute positions.
 pub(crate) fn snake_attr(wire: &str) -> String {
@@ -27,12 +27,6 @@ pub(crate) fn sanitize_ident(wire: &str) -> String {
     escape_keyword(&crate::naming::sanitize(wire))
 }
 
-/// A Python string literal. JSON's string escapes are all valid in Python,
-/// so `serde_json` renders one directly; non-ASCII stays as UTF-8 text.
-pub(crate) fn string_lit(value: &str) -> String {
-    serde_json::Value::String(value.to_string()).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,12 +43,5 @@ mod tests {
         assert_eq!(sanitize_ident("logoUrl"), "logoUrl");
         assert_eq!(sanitize_ident("Retry-After"), "Retry_After");
         assert_eq!(sanitize_ident("lambda"), "lambda_");
-    }
-
-    #[test]
-    fn string_lit_escapes_quotes_and_controls_and_keeps_non_ascii() {
-        assert_eq!(string_lit("Café"), "\"Café\"");
-        assert_eq!(string_lit("say \"hi\""), r#""say \"hi\"""#);
-        assert_eq!(string_lit("a\\b\n\u{1}"), r#""a\\b\n\u0001""#);
     }
 }

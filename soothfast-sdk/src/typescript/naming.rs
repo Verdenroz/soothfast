@@ -5,6 +5,7 @@
 //! response is already the emitted interface — there is no decode step to
 //! get wrong.
 
+pub(crate) use crate::naming::string_lit;
 use crate::naming::{sanitize, snake};
 
 /// camelCase an operation id: `get_batch_quotes` and `GetBatchQuotes` both
@@ -79,12 +80,6 @@ pub(crate) fn prop_key(wire: &str) -> String {
     } else {
         string_lit(wire)
     }
-}
-
-/// A TypeScript string literal. JSON string escaping is a subset of
-/// TypeScript's, so `serde_json` renders one directly.
-pub(crate) fn string_lit(value: &str) -> String {
-    serde_json::Value::String(value.to_string()).to_string()
 }
 
 /// Append an underscore to words TypeScript will not accept as a binding.
