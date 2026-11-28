@@ -1231,7 +1231,11 @@ a pass and adds a line to the comment naming the label, but never waives an
 error. Who may apply the label is for the workflow to decide before it passes
 the flag.
 `ci docs` is the `Docs check` job. It checks the `[docs] package`s, or the
-`-p` ones given, with the defaults each package resolves in `soothfast.toml`.
+`-p` ones given, in one `docs check` over all the markdown, building each
+package's rustdoc surface with the `features` that package resolves in
+`soothfast.toml`. The packages' other `docs` keys (`paths`, `baseline`)
+apply to the whole check, so `docs check` refuses packages that set them
+differently and names the key; coverage minimums are not read and may differ.
 On a pull request `docs check` compares against `origin/` the base branch, and
 elsewhere in a run against `HEAD^`; a local run compares against nothing.
 `--baselines DIR` is where the gate legs' baselines were downloaded, one
