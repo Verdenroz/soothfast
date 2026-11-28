@@ -37,6 +37,7 @@ soothfast-sdk = { path = "soothfast-sdk", version = "0.9.1" }
 soothfast-report = { path = "soothfast-report", version = "0.9.1" }
 soothfast-site = { path = "soothfast-site", version = "0.9.1" }
 serde_json = "1"
+tokio = { version = "1", default-features = false }
 linkme = "=0.3.38"
 proc-macro2 = "1"
 quote = "1"

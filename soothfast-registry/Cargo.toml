@@ -18,7 +18,7 @@ tokio = ["dep:tokio"]
 
 [dependencies]
 linkme.workspace = true
-tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
+tokio = { workspace = true, features = ["rt"], optional = true }
 
 # Path-only (no version): stripped on publish, so no dev-dep cycle on crates.io.
 [dev-dependencies]
