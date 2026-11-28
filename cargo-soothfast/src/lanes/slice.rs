@@ -6,13 +6,23 @@ use crate::unmeasured::{self, OWNERS_KEY};
 
 /// What the `legs` of a gate (one baseline per shard) measured of `package`,
 /// as a baseline of its own. `None` unless exactly `expect` legs account for
-/// the package by their owners, since a missing leg would carry a partial run.
+/// the package by their owners, since a missing leg would carry a partial run,
+/// and `None` when a leg holds an assertion with no id, which no package can
+/// claim.
 pub fn rust(package: &str, legs: &[&Value], expect: usize) -> Option<Value> {
     let owning: Vec<&&Value> = legs
         .iter()
         .filter(|leg| leg[OWNERS_KEY][package].is_array())
         .collect();
-    if owning.len() != expect {
+    let idless = |a: &Value| a["id"].as_str().is_none_or(str::is_empty);
+    let unattributable = owning.iter().any(|leg| {
+        leg["assertions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(idless)
+    });
+    if owning.len() != expect || unattributable {
         return None;
     }
     let mut items = Map::new();
@@ -96,6 +106,13 @@ mod tests {
         let old = json!({"version": 1, "items": {"core::a": {}}});
         assert_eq!(rust("core", &[&old], 1), None);
         assert_eq!(rust("cli", &[&a], 1), None);
+    }
+
+    #[test]
+    fn an_assertion_with_no_id_gives_no_slice() {
+        let mut a = leg(&[("core", &["core::a"])], &["core::a"]);
+        a["assertions"] = json!([{"kind": "alloc", "detail": "d", "ok": true}]);
+        assert_eq!(rust("core", &[&a], 1), None);
     }
 
     #[test]
