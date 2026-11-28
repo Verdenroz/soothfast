@@ -28,6 +28,69 @@ impl Iters<'_> {
     }
 }
 
+/// A runtime the adopter supplies to drive async bench workloads, so they can
+/// use I/O and timers the counting executor cannot service.
+pub trait Executor {
+    /// Run `fut` to completion on the calling thread.
+    fn block_on<F: Future>(&self, fut: F) -> F::Output;
+}
+
+#[cfg(feature = "tokio")]
+impl Executor for tokio::runtime::Runtime {
+    fn block_on<F: Future>(&self, fut: F) -> F::Output {
+        tokio::runtime::Runtime::block_on(self, fut)
+    }
+}
+
+/// Setup output awaiting resolution. Macro glue wraps a setup call in this and
+/// resolves it through [`SetupFuture`] or [`SetupValue`], which method lookup
+/// picks by whether the output is a future. Not user API.
+#[doc(hidden)]
+pub struct Setup<T>(Cell<Option<T>>);
+
+impl<T> Setup<T> {
+    /// Wrap a setup call's output.
+    pub fn new(value: T) -> Self {
+        Setup(Cell::new(Some(value)))
+    }
+
+    fn take(&self) -> T {
+        self.0.take().expect("setup output taken once")
+    }
+}
+
+/// Resolution for an async setup: block on it. Not user API.
+#[doc(hidden)]
+pub trait SetupFuture {
+    /// What the setup resolves to.
+    type Out;
+    /// Block on the setup future.
+    fn resolve<E: Executor>(self, exec: &E) -> Self::Out;
+}
+
+impl<F: Future> SetupFuture for Setup<F> {
+    type Out = F::Output;
+    fn resolve<E: Executor>(self, exec: &E) -> F::Output {
+        exec.block_on(self.take())
+    }
+}
+
+/// Resolution for a sync setup: pass the value through. Not user API.
+#[doc(hidden)]
+pub trait SetupValue {
+    /// What the setup resolves to.
+    type Out;
+    /// Pass the setup value through.
+    fn resolve<E: Executor>(self, exec: &E) -> Self::Out;
+}
+
+impl<T> SetupValue for &Setup<T> {
+    type Out = T;
+    fn resolve<E: Executor>(self, _: &E) -> T {
+        self.take()
+    }
+}
+
 /// Single-use measurement context handed to registered runner glue.
 ///
 /// Generated glue performs setup, then calls [`Bencher::iter`] (or
@@ -79,6 +142,22 @@ impl<'a> Bencher<'a> {
         (self.collector)(&mut || {
             for _ in 0..iters.get() {
                 std::hint::black_box(block_on_counting(f()));
+            }
+        });
+    }
+
+    /// Like [`Bencher::iter_async`], but each iteration's future runs on the
+    /// caller's executor. Polls and wakes are not counted.
+    pub fn iter_on<E, F, Fut>(&mut self, exec: &E, mut f: F)
+    where
+        E: Executor,
+        F: FnMut() -> Fut,
+        Fut: Future,
+    {
+        let iters = self.iters;
+        (self.collector)(&mut || {
+            for _ in 0..iters.get() {
+                std::hint::black_box(exec.block_on(f()));
             }
         });
     }
@@ -546,6 +625,39 @@ pub const fn fnv1a(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Counting(Cell<u64>);
+
+    impl Executor for Counting {
+        fn block_on<F: Future>(&self, fut: F) -> F::Output {
+            self.0.set(self.0.get() + 1);
+            block_on_counting(fut)
+        }
+    }
+
+    #[test]
+    fn iter_on_drives_every_iteration_through_the_executor() {
+        let exec = Counting(Cell::new(0));
+        let iters = Cell::new(5);
+        let mut runs = 0;
+        let mut collector = |body: &mut dyn FnMut()| body();
+        Bencher::__counted(&iters, &mut collector).iter_on(&exec, || {
+            runs += 1;
+            let n = runs;
+            async move { n }
+        });
+        assert_eq!(exec.0.get(), 5);
+        assert_eq!(runs, 5);
+    }
+
+    #[test]
+    fn setup_resolves_futures_and_plain_values() {
+        use super::{SetupFuture as _, SetupValue as _};
+        let exec = Counting(Cell::new(0));
+        assert_eq!(Setup::new(async { 7 }).resolve(&exec), 7);
+        assert_eq!(Setup::new(8).resolve(&exec), 8);
+        assert_eq!(exec.0.get(), 1);
+    }
 
     #[test]
     fn fnv1a_known_vectors() {

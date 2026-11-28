@@ -18,6 +18,7 @@ struct Attrs {
     group: Option<String>,
     setup: Option<syn::Path>,
     setup_sized: Option<syn::Path>,
+    executor: Option<syn::Path>,
     covers: String,
     max_allocs: Option<u64>,
     p99_ns: Option<u64>,
@@ -44,6 +45,7 @@ fn parse_attrs(attr: TokenStream, allowed: &[&str]) -> Result<Attrs, syn::Error>
             "group" => out.group = Some(meta.value()?.parse::<syn::LitStr>()?.value()),
             "setup" => out.setup = Some(meta.value()?.parse()?),
             "setup_sized" => out.setup_sized = Some(meta.value()?.parse()?),
+            "executor" => out.executor = Some(meta.value()?.parse()?),
             "covers" => out.covers = meta.value()?.parse::<syn::LitStr>()?.value(),
             "alloc" => out.max_allocs = Some(meta.value()?.parse::<syn::LitInt>()?.base10_parse()?),
             "tolerance" => {
@@ -123,12 +125,13 @@ fn parse_percent(s: &str) -> Result<f64, String> {
 /// ```
 ///
 /// Functions with parameters need `#[soothfast::bench(setup = ...)]` instead.
+/// An `async fn` takes `executor = f` as `#[bench]` does.
 #[proc_macro_attribute]
 pub fn measured(attr: TokenStream, item: TokenStream) -> TokenStream {
     // The raw attr tokens join the fingerprint: threshold/claim edits are
     // meaningful changes even though they sit outside the fn tokens.
     let attr_str = attr.to_string();
-    let attrs = match parse_attrs(attr, &["group", "alloc", "p99", "covers"]) {
+    let attrs = match parse_attrs(attr, &["group", "alloc", "p99", "covers", "executor"]) {
         Ok(a) => a,
         Err(e) => return e.to_compile_error().into(),
     };
@@ -143,11 +146,11 @@ pub fn measured(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
     let name = &func.sig.ident;
-    let glue = if func.sig.asyncness.is_some() {
-        quote! { __b.iter_async(|| #name()); }
-    } else {
-        quote! { __b.iter(|| #name()); }
-    };
+    if let Some(e) = executor_misuse(&func, &attrs) {
+        return e;
+    }
+    let (exec_init, iter_call) = iter_glue(&func, &attrs, quote!(#name()));
+    let glue = quote! { #exec_init #iter_call };
     registration(&func, &attrs, &attr_str, glue, None)
 }
 
@@ -162,6 +165,8 @@ pub fn measured(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `setup = f` feeds `f() -> T` as `&T`; `setup_sized = f` feeds `f(n) -> T`
 /// and enables `sizes(...)`/`complexity` sweeps (the plain measurement uses
 /// the largest size). Setup always runs outside the measured region.
+/// `executor = f` runs an `async fn` bench on the `soothfast::Executor` that
+/// `f()` returns, where `setup`/`setup_sized` may be `async fn`s too.
 /// Route constant inputs through `soothfast::keep` or LLVM const-folds them.
 #[proc_macro_attribute]
 pub fn bench(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -172,6 +177,7 @@ pub fn bench(attr: TokenStream, item: TokenStream) -> TokenStream {
             "group",
             "setup",
             "setup_sized",
+            "executor",
             "covers",
             "alloc",
             "p99",
@@ -205,29 +211,28 @@ pub fn bench(attr: TokenStream, item: TokenStream) -> TokenStream {
         );
     }
 
-    // Async bench fns drive the counting executor via iter_async.
-    let iter_fn = if func.sig.asyncness.is_some() {
-        quote!(iter_async)
-    } else {
-        quote!(iter)
-    };
+    if let Some(e) = executor_misuse(&func, &attrs) {
+        return e;
+    }
     let arity = func.sig.inputs.len();
     match (&attrs.setup, &attrs.setup_sized, arity) {
         (Some(setup), None, 1) => {
-            let glue = quote! {
-                let __input = #setup();
-                __b.#iter_fn(|| #name(&__input));
-            };
+            let (exec_init, iter_call) = iter_glue(&func, &attrs, quote!(#name(&__input)));
+            let input = input_glue(&attrs, quote!(#setup()));
+            let glue = quote! { #exec_init #input #iter_call };
             registration(&func, &attrs, &attr_str, glue, None)
         }
         (None, Some(setup_sized), 1) => {
             let largest = *attrs.sizes.iter().max().expect("sizes non-empty");
             let glue_sized_ident = format_ident!("__soothfast_glue_sized_{}", name);
+            let (exec_init, iter_call) = iter_glue(&func, &attrs, quote!(#name(&__input)));
+            let input = input_glue(&attrs, quote!(#setup_sized(__n)));
             let sized = quote! {
                 #[doc(hidden)]
                 fn #glue_sized_ident(__b: &mut ::soothfast::__private::Bencher, __n: usize) {
-                    let __input = #setup_sized(__n);
-                    __b.#iter_fn(|| #name(&__input));
+                    #exec_init
+                    #input
+                    #iter_call
                 }
             };
             let glue = quote! { #glue_sized_ident(__b, #largest); };
@@ -240,7 +245,8 @@ pub fn bench(attr: TokenStream, item: TokenStream) -> TokenStream {
             )
         }
         (None, None, 0) => {
-            let glue = quote! { __b.#iter_fn(|| #name()); };
+            let (exec_init, iter_call) = iter_glue(&func, &attrs, quote!(#name()));
+            let glue = quote! { #exec_init #iter_call };
             registration(&func, &attrs, &attr_str, glue, None)
         }
         (Some(_), None, n) => err(
@@ -503,6 +509,43 @@ fn fingerprint_input(func: &syn::ItemFn, attr_str: &str) -> String {
     format!("{attr_str}\u{1}{}", quote!(#f))
 }
 
+fn executor_misuse(func: &syn::ItemFn, attrs: &Attrs) -> Option<TokenStream> {
+    (attrs.executor.is_some() && func.sig.asyncness.is_none()).then(|| {
+        err(
+            func.sig.ident.span(),
+            "`executor` drives an `async fn`; remove it or make the fn async",
+        )
+    })
+}
+
+/// Executor construction (outside measurement) and the `iter*` call for `call`.
+/// Without `executor`, async fns run on the counting executor.
+fn iter_glue(
+    func: &syn::ItemFn,
+    attrs: &Attrs,
+    call: proc_macro2::TokenStream,
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+    match (&attrs.executor, func.sig.asyncness.is_some()) {
+        (Some(exec), _) => (
+            quote! { let __exec = #exec(); },
+            quote! { __b.iter_on(&__exec, || #call); },
+        ),
+        (None, true) => (quote!(), quote! { __b.iter_async(|| #call); }),
+        (None, false) => (quote!(), quote! { __b.iter(|| #call); }),
+    }
+}
+
+/// `__input` binding; with an executor the setup may be an `async fn`.
+fn input_glue(attrs: &Attrs, call: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    if attrs.executor.is_none() {
+        return quote! { let __input = #call; };
+    }
+    quote! {
+        use ::soothfast::__private::{SetupFuture as _, SetupValue as _};
+        let __input = ::soothfast::__private::Setup::new(#call).resolve(&__exec);
+    }
+}
+
 /// Shared expansion: original fn + glue fn(s) + registry entry.
 fn registration(
     func: &syn::ItemFn,
@@ -553,7 +596,7 @@ fn registration(
     if let Some(t) = attrs.tolerance_pct {
         entry = quote! { #entry.with_tolerance(#t) };
     }
-    if func.sig.asyncness.is_some() {
+    if func.sig.asyncness.is_some() && attrs.executor.is_none() {
         entry = quote! { #entry.with_async() };
     }
     let sized_defs = match &sized {

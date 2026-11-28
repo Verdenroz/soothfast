@@ -36,6 +36,7 @@ pub mod embed;
 
 pub use soothfast_macros::{bench, fixture, measured, mock_seam, route};
 pub use soothfast_registry as registry;
+pub use soothfast_registry::Executor;
 
 /// Optimizer barrier for measured code, the `black_box` equivalent.
 pub fn keep<T>(value: T) -> T {
@@ -93,6 +94,21 @@ macro_rules! bench_main {
 pub mod __private {
     pub use soothfast_registry::{
         Assertions, Bencher, FIXTURES, FixtureItem, MEASURED, MOCKS, MeasuredItem, MockSeam,
-        MockSeamItem, ROUTES, RouteItem, fnv1a, linkme,
+        MockSeamItem, ROUTES, RouteItem, Setup, SetupFuture, SetupValue, fnv1a, linkme,
     };
 }
+
+/// `executor` on a sync fn is rejected at expansion.
+///
+/// ```compile_fail
+/// struct Rt;
+/// impl soothfast::Executor for Rt {
+///     fn block_on<F: std::future::Future>(&self, _: F) -> F::Output { loop {} }
+/// }
+/// fn rt() -> Rt { Rt }
+///
+/// #[soothfast::bench(executor = rt)]
+/// fn sync_fn() {}
+/// ```
+#[cfg(doctest)]
+struct ExecutorNeedsAsync;

@@ -16,7 +16,13 @@ categories.workspace = true
 # bench binary. The plain library dependency stays linkme-only.
 runner = ["dep:soothfast-measure"]
 
+# `impl Executor for tokio::runtime::Runtime` for `#[bench(executor = ...)]`.
+tokio = ["soothfast-registry/tokio"]
+
 [dependencies]
 soothfast-macros.workspace = true
 soothfast-registry.workspace = true
 soothfast-measure = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "time"] }

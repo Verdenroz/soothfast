@@ -11,8 +11,14 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+# `impl Executor for tokio::runtime::Runtime`. Off by default: the plain
+# dependency tree stays linkme-only.
+tokio = ["dep:tokio"]
+
 [dependencies]
 linkme.workspace = true
+tokio = { workspace = true, features = ["rt"], optional = true }
 
 # Path-only (no version): stripped on publish, so no dev-dep cycle on crates.io.
 [dev-dependencies]

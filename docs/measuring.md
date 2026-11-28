@@ -80,6 +80,79 @@ not count toward `coverage measure`'s denominator, and it is not warned about
 as long as its first module exists in the package's `src/` (a file, a
 directory with `mod.rs`, or an inline module in the crate root).
 
+## Async benches on your own runtime
+
+An `async fn` bench with no `executor` runs on a small built-in executor that
+counts polls and wakes. It has no reactor or timers, so a future that does
+network I/O or sleeps never completes there. Name a runtime with `executor`
+instead: a `fn() -> E` where `E` implements `soothfast::Executor`. Each
+measurement pass (every walltime sample, perfcnt round, alloc run and sweep
+size) calls it and the setup again, outside the measured region, so keep both
+cheap and safe to repeat. Every iteration's future runs through
+`E::block_on`. Polls and wakes are not counted for these items.
+
+`impl Executor for tokio::runtime::Runtime` is behind the `tokio` feature of
+`soothfast`, off by default so the dependency tree does not change. Anything
+else implements the one-method trait itself.
+
+With an executor, `setup` and `setup_sized` may be `async fn`s. They run on
+the same executor, outside measurement, so a client or mock server that needs
+a runtime context can be built there. Any setup output that implements
+`Future` is awaited, so a setup cannot hand the bench a future as data. A
+service bench against a stand-in upstream looks like this:
+
+```rust ignore
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+struct Fixture {
+    upstream: mockito::ServerGuard,
+    cache: Cache,
+}
+
+async fn fixture() -> Fixture {
+    let mut upstream = mockito::Server::new_async().await;
+    upstream.mock("GET", "/series/GDP").with_body(SERIES_JSON).create_async().await;
+    set_base_url(&upstream.url());
+    Fixture { upstream, cache: Cache::new(None) }
+}
+
+#[soothfast::bench(group = "services", executor = runtime, setup = fixture)]
+async fn get_series_bench(fx: &Fixture) {
+    soothfast::keep(get_series(&fx.cache, "GDP").await.unwrap());
+}
+```
+
+`executor` works with `sizes(...)` and `complexity` too, and on
+`#[measured]` for a zero-argument `async fn`. It is an error on a sync fn.
+
+### What each backend counts
+
+Work on other threads is not counted the same way by every backend. A
+loopback server thread and tokio's blocking pool are the two common cases.
+
+- `alloc` counts into process-wide atomics, so allocations on any thread land
+  in the item, including the mock server's.
+- `perfcnt` opens its counters for the measuring thread only, so other
+  threads' instructions and cycles are not counted.
+- `callgrind` runs valgrind without `--separate-threads`, so one dump sums
+  every thread and the server's instructions are counted. This follows from
+  the invocation; it was not measured on a host where valgrind runs.
+- `walltime` is elapsed time on the measuring thread, so it includes the
+  time spent waiting on the server, but not the server's CPU work as such.
+
+Use a `current_thread` runtime. Either flavor polls the bench future on the
+measuring thread, but a multi-thread runtime runs spawned tasks and its I/O
+and timer drivers on workers, where `perfcnt` cannot see them. Keep the
+stand-in cheap and constant: its allocations and instructions count toward
+the item under `alloc` and `callgrind`, and its latency counts under
+`walltime`. To see what an upstream adds, bench the same call against a
+variant whose handler does a known amount of extra work and compare.
+
 ## What callgrind's counts depend on
 
 callgrind counts are exact for a given binary, valgrind and libc, but not for
