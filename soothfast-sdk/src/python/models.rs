@@ -4,7 +4,7 @@ use std::fmt::Write;
 
 use crate::SdkOptions;
 use crate::model::{Model, Sdk, Ty};
-use crate::python::{HEADER, annotation, doc_escape};
+use crate::python::{HEADER, annotation, doc_escape, naming};
 
 pub(crate) fn render(sdk: &Sdk, opts: &SdkOptions) -> String {
     let mut out = String::new();
@@ -64,7 +64,12 @@ fn render_model(out: &mut String, model: &Model) {
         let _ = writeln!(out);
         let _ = writeln!(out, "    _WIRE: typing.ClassVar[dict[str, str]] = {{");
         for f in renamed {
-            let _ = writeln!(out, "        {:?}: {:?},", f.attr, f.wire);
+            let _ = writeln!(
+                out,
+                "        {}: {},",
+                naming::string_lit(&f.attr),
+                naming::string_lit(&f.wire)
+            );
         }
         let _ = writeln!(out, "    }}");
     }

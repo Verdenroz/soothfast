@@ -74,16 +74,17 @@ pub(crate) fn annotation(ty: &Ty, prefix: &str) -> String {
             let pairs: Vec<String> = arms
                 .iter()
                 .zip(&types)
-                .map(|((value, _), ty)| format!("({value:?}, {ty})"))
+                .map(|((value, _), ty)| format!("({}, {ty})", naming::string_lit(value)))
                 .collect();
             format!(
-                "typing.Annotated[{}, Tagged({tag:?}, {})]",
+                "typing.Annotated[{}, Tagged({}, {})]",
                 types.join(" | "),
+                naming::string_lit(tag),
                 pairs.join(", ")
             )
         }
         Ty::Literal(values) => {
-            let quoted: Vec<String> = values.iter().map(|v| format!("{v:?}")).collect();
+            let quoted: Vec<String> = values.iter().map(|v| naming::string_lit(v)).collect();
             format!("typing.Literal[{}]", quoted.join(", "))
         }
     }
@@ -101,4 +102,26 @@ pub(crate) fn into_expr(ty: &Ty) -> String {
 /// Escape a string into a Python docstring body.
 pub(crate) fn doc_escape(text: &str) -> String {
     text.replace('\\', "\\\\").replace("\"\"\"", "\\\"\\\"\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tagged_and_literal_values_render_as_python_string_literals() {
+        let tagged = Ty::Tagged {
+            tag: "kind".into(),
+            arms: vec![
+                ("Café".into(), Ty::Named("A".into())),
+                ("say \"hi\"".into(), Ty::Named("B".into())),
+            ],
+        };
+        assert_eq!(
+            annotation(&tagged, ""),
+            r#"typing.Annotated[A | B, Tagged("kind", ("Café", A), ("say \"hi\"", B))]"#
+        );
+        let literal = Ty::Literal(vec!["é\n".into()]);
+        assert_eq!(annotation(&literal, ""), r#"typing.Literal["é\n"]"#);
+    }
 }
