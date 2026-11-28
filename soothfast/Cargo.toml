@@ -25,9 +25,4 @@ soothfast-registry.workspace = true
 soothfast-measure = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "time", "net", "io-util"] }
-
-[[bench]]
-name = "soothfast"
-harness = false
-required-features = ["runner", "tokio"]
+tokio = { workspace = true, features = ["rt", "time"] }
