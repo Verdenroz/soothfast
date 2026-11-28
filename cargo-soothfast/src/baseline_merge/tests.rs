@@ -522,7 +522,7 @@ fn a_carried_package_merges_beside_fresh_shards_without_being_unaccounted() {
     let merged = merge(&files, 3, &both).unwrap();
     assert!(merged["items"].get("cli::a").is_some());
     assert_eq!(merged["owners"]["cli"], json!(["cli::a"]));
-    assert_eq!(merged["noise_pct"], 2.0);
+    assert!(merged.get("noise_pct").is_none());
     assert_eq!(merged["unmeasured"], json!([]));
 }
 
@@ -553,4 +553,21 @@ fn a_package_not_carried_is_still_accounted_for() {
     let files = [carried_file("cli", "cli::a")];
     let merged = merge(&files, 1, &packages()).unwrap();
     assert_eq!(merged["unmeasured"][0]["package"], "core");
+}
+
+#[test]
+fn a_fresh_leg_decides_noise_and_build_over_a_carried_file() {
+    let (label, mut leg) = shard_file(1);
+    leg["noise_pct"] = json!(1.0);
+    leg["build"] = json!({"seconds": 1});
+    let (carried_label, mut carried) = carried_file("cli", "cli::a");
+    carried["build"] = json!({"seconds": 99});
+    let both = vec!["core".to_string(), "cli".to_string()];
+    let files = [(carried_label.clone(), carried.clone()), (label, leg)];
+    let merged = merge(&files, 3, &both).unwrap();
+    assert_eq!(merged["noise_pct"], 1.0);
+    assert_eq!(merged["build"], json!({"seconds": 1}));
+    let alone = merge(&[(carried_label, carried)], 3, &["cli".to_string()]).unwrap();
+    assert_eq!(alone["noise_pct"], 2.0);
+    assert_eq!(alone["build"], json!({"seconds": 99}));
 }

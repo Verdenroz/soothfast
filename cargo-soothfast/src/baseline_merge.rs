@@ -21,7 +21,8 @@ const SHARD_KEY: &str = "shard";
 /// Every item each package's bench binary lists, whichever shard owns it.
 const LISTED_KEY: &str = "listed";
 /// The packages a carried file holds the items of, taken from a stored pass
-/// instead of a gate leg of this run.
+/// instead of a gate leg of this run. It adds items, owners and assertions;
+/// its `noise_pct` and `build` count only when no gate leg is present.
 pub const CARRIED_KEY: &str = "carried";
 /// The import prefix of an import gate's file, which is no shard of the gate.
 pub const IMPORTED_KEY: &str = "imported";
@@ -300,6 +301,7 @@ fn merge_on(
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut origin: BTreeMap<String, &str> = BTreeMap::new();
     let mut carried: BTreeSet<&str> = BTreeSet::new();
+    let mut carried_meta: Vec<&Value> = Vec::new();
     for (label, doc) in files {
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
@@ -314,13 +316,7 @@ fn merge_on(
                 .and_then(|p| p.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
                 .ok_or_else(|| corrupt(label, "`carried` is not a list of packages".into()))?;
             carried.extend(packages);
-            for key in ["noise_pct", "build"] {
-                if out.get(key).is_none()
-                    && let Some(v) = doc.get(key)
-                {
-                    out[key] = v.clone();
-                }
-            }
+            carried_meta.push(doc);
         } else if is_rust(doc) {
             let shard = match doc.get(SHARD_KEY) {
                 None => Shard { index: 1, count: 1 },
@@ -396,6 +392,13 @@ fn merge_on(
             }
         }
         entries.extend(file_entries);
+    }
+    for key in ["noise_pct", "build"] {
+        if shards.is_empty()
+            && let Some(v) = carried_meta.iter().find_map(|doc| doc.get(key))
+        {
+            out[key] = v.clone();
+        }
     }
     for pkg in packages.iter().filter(|p| !carried.contains(p.as_str())) {
         if not_gated.is_none() || shards.values().any(|s| s.covers(pkg)) {
