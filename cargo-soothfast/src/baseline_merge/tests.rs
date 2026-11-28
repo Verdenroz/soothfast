@@ -502,3 +502,55 @@ fn repeated_plan_files_add_up() {
     assert_eq!(planned["core"].len(), 2);
     assert_eq!(planned["app"].len(), 1);
 }
+
+fn carried_file(package: &str, id: &str) -> (String, Value) {
+    let doc = json!({
+        "version": 1,
+        "carried": [package],
+        "owners": { package: [id] },
+        "items": { id: item() },
+        "noise_pct": 2.0,
+    });
+    (format!("{package}.json"), doc)
+}
+
+#[test]
+fn a_carried_package_merges_beside_fresh_shards_without_being_unaccounted() {
+    let mut files: Vec<_> = (1..=3).map(shard_file).collect();
+    files.push(carried_file("cli", "cli::a"));
+    let both = vec!["core".to_string(), "cli".to_string()];
+    let merged = merge(&files, 3, &both).unwrap();
+    assert!(merged["items"].get("cli::a").is_some());
+    assert_eq!(merged["owners"]["cli"], json!(["cli::a"]));
+    assert_eq!(merged["noise_pct"], 2.0);
+    assert_eq!(merged["unmeasured"], json!([]));
+}
+
+#[test]
+fn every_package_carried_merges_with_no_leg() {
+    let files = [
+        carried_file("core", "core::a"),
+        carried_file("cli", "cli::a"),
+    ];
+    let both = vec!["core".to_string(), "cli".to_string()];
+    let merged = merge(&files, 3, &both).unwrap();
+    assert_eq!(merged["items"].as_object().unwrap().len(), 2);
+    assert_eq!(merged["unmeasured"], json!([]));
+}
+
+#[test]
+fn a_carried_item_a_leg_also_holds_is_corrupt() {
+    let mut files = vec![shard_file(1)];
+    files.push(carried_file("cli", &owned_by(1, 3)));
+    assert!(matches!(
+        merge(&files, 3, &packages()),
+        Err(MergeError::Corrupt(_))
+    ));
+}
+
+#[test]
+fn a_package_not_carried_is_still_accounted_for() {
+    let files = [carried_file("cli", "cli::a")];
+    let merged = merge(&files, 1, &packages()).unwrap();
+    assert_eq!(merged["unmeasured"][0]["package"], "core");
+}

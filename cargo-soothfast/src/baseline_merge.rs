@@ -20,6 +20,9 @@ mod plan;
 const SHARD_KEY: &str = "shard";
 /// Every item each package's bench binary lists, whichever shard owns it.
 const LISTED_KEY: &str = "listed";
+/// The packages a carried file holds the items of, taken from a stored pass
+/// instead of a gate leg of this run.
+pub const CARRIED_KEY: &str = "carried";
 /// The import prefix of an import gate's file, which is no shard of the gate.
 pub const IMPORTED_KEY: &str = "imported";
 
@@ -296,6 +299,7 @@ fn merge_on(
     let no_items = Map::new();
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut origin: BTreeMap<String, &str> = BTreeMap::new();
+    let mut carried: BTreeSet<&str> = BTreeSet::new();
     for (label, doc) in files {
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
@@ -304,7 +308,20 @@ fn merge_on(
                 .as_object()
                 .ok_or_else(|| corrupt(label, "`items` is not an object".into()))?,
         };
-        if is_rust(doc) {
+        if let Some(packages) = doc.get(CARRIED_KEY) {
+            let packages = packages
+                .as_array()
+                .and_then(|p| p.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
+                .ok_or_else(|| corrupt(label, "`carried` is not a list of packages".into()))?;
+            carried.extend(packages);
+            for key in ["noise_pct", "build"] {
+                if out.get(key).is_none()
+                    && let Some(v) = doc.get(key)
+                {
+                    out[key] = v.clone();
+                }
+            }
+        } else if is_rust(doc) {
             let shard = match doc.get(SHARD_KEY) {
                 None => Shard { index: 1, count: 1 },
                 Some(v) => v
@@ -380,7 +397,7 @@ fn merge_on(
         }
         entries.extend(file_entries);
     }
-    for pkg in packages {
+    for pkg in packages.iter().filter(|p| !carried.contains(p.as_str())) {
         if not_gated.is_none() || shards.values().any(|s| s.covers(pkg)) {
             let plan = planned.get(pkg.as_str());
             entries.extend(unaccounted(pkg, &shards, expect, plan));
