@@ -36,6 +36,7 @@ pub mod embed;
 
 pub use soothfast_macros::{bench, fixture, measured, mock_seam, route};
 pub use soothfast_registry as registry;
+pub use soothfast_registry::Executor;
 
 /// Optimizer barrier for measured code, the `black_box` equivalent.
 pub fn keep<T>(value: T) -> T {
@@ -92,7 +93,7 @@ macro_rules! bench_main {
 #[doc(hidden)]
 pub mod __private {
     pub use soothfast_registry::{
-        Assertions, Bencher, FIXTURES, FixtureItem, MEASURED, MOCKS, MeasuredItem, MockSeam,
-        MockSeamItem, ROUTES, RouteItem, fnv1a, linkme,
+        Assertions, Bencher, Executor, FIXTURES, FixtureItem, MEASURED, MOCKS, MeasuredItem,
+        MockSeam, MockSeamItem, ROUTES, RouteItem, fnv1a, linkme,
     };
 }

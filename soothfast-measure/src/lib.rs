@@ -24,3 +24,4 @@ pub mod walltime;
 
 pub use alloc::CountingAllocator;
 pub use runner::main;
+pub use soothfast_registry::Executor;
