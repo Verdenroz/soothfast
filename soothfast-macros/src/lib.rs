@@ -125,6 +125,7 @@ fn parse_percent(s: &str) -> Result<f64, String> {
 /// ```
 ///
 /// Functions with parameters need `#[soothfast::bench(setup = ...)]` instead.
+/// An `async fn` takes `executor = f` as `#[bench]` does.
 #[proc_macro_attribute]
 pub fn measured(attr: TokenStream, item: TokenStream) -> TokenStream {
     // The raw attr tokens join the fingerprint: threshold/claim edits are
@@ -164,6 +165,8 @@ pub fn measured(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `setup = f` feeds `f() -> T` as `&T`; `setup_sized = f` feeds `f(n) -> T`
 /// and enables `sizes(...)`/`complexity` sweeps (the plain measurement uses
 /// the largest size). Setup always runs outside the measured region.
+/// `executor = f` runs an `async fn` bench on the `soothfast::Executor` that
+/// `f()` returns, where `setup`/`setup_sized` may be `async fn`s too.
 /// Route constant inputs through `soothfast::keep` or LLVM const-folds them.
 #[proc_macro_attribute]
 pub fn bench(attr: TokenStream, item: TokenStream) -> TokenStream {

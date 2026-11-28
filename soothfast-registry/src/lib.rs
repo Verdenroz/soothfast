@@ -49,6 +49,7 @@ impl Executor for tokio::runtime::Runtime {
 pub struct Setup<T>(Cell<Option<T>>);
 
 impl<T> Setup<T> {
+    /// Wrap a setup call's output.
     pub fn new(value: T) -> Self {
         Setup(Cell::new(Some(value)))
     }
@@ -61,7 +62,9 @@ impl<T> Setup<T> {
 /// Resolution for an async setup: block on it. Not user API.
 #[doc(hidden)]
 pub trait SetupFuture {
+    /// What the setup resolves to.
     type Out;
+    /// Block on the setup future.
     fn resolve<E: Executor>(self, exec: &E) -> Self::Out;
 }
 
@@ -75,7 +78,9 @@ impl<F: Future> SetupFuture for Setup<F> {
 /// Resolution for a sync setup: pass the value through. Not user API.
 #[doc(hidden)]
 pub trait SetupValue {
+    /// What the setup resolves to.
     type Out;
+    /// Pass the setup value through.
     fn resolve<E: Executor>(self, exec: &E) -> Self::Out;
 }
 

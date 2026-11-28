@@ -85,9 +85,11 @@ directory with `mod.rs`, or an inline module in the crate root).
 An `async fn` bench with no `executor` runs on a small built-in executor that
 counts polls and wakes. It has no reactor or timers, so a future that does
 network I/O or sleeps never completes there. Name a runtime with `executor`
-instead: a `fn() -> E` where `E` implements `soothfast::Executor`. The glue
-calls it once, outside the measured region, and every iteration's future runs
-through `E::block_on`. Polls and wakes are not counted for these items.
+instead: a `fn() -> E` where `E` implements `soothfast::Executor`. Each
+measurement pass (every walltime sample, perfcnt round, alloc run and sweep
+size) calls it and the setup again, outside the measured region, so keep both
+cheap and safe to repeat. Every iteration's future runs through
+`E::block_on`. Polls and wakes are not counted for these items.
 
 `impl Executor for tokio::runtime::Runtime` is behind the `tokio` feature of
 `soothfast`, off by default so the dependency tree does not change. Anything
@@ -95,7 +97,8 @@ else implements the one-method trait itself.
 
 With an executor, `setup` and `setup_sized` may be `async fn`s. They run on
 the same executor, outside measurement, so a client or mock server that needs
-a runtime context can be built there. This is the shape of a service bench
+a runtime context can be built there. A setup whose output implements
+`Future` is awaited, so a setup cannot hand the bench a future as data. This is the shape of a service bench
 against a stand-in upstream:
 
 ```rust ignore
@@ -142,9 +145,11 @@ loopback server thread and tokio's blocking pool are the two common cases.
 - `walltime` is elapsed time on the measuring thread, so it includes the
   time spent waiting on the server, but not the server's CPU work as such.
 
-Use a `current_thread` runtime. The future then runs on the measuring thread
-and `perfcnt` sees all of the client's work, where a multi-thread runtime
-would move it onto workers `perfcnt` cannot see. Keep the stand-in cheap and
+Use a `current_thread` runtime. `block_on` polls the bench future on the
+measuring thread under either flavor, but a multi-thread runtime moves spawned
+tasks and its I/O and timer drivers onto workers `perfcnt` cannot see; a
+`current_thread` runtime keeps all of the client's work where `perfcnt` counts
+it. Keep the stand-in cheap and
 constant: its allocations and instructions are part of the item under `alloc`
 and `callgrind`, and its latency is part of `walltime`. To check what a
 given upstream adds, bench the same call against a variant whose handler does
