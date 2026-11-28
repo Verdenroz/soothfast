@@ -36,6 +36,9 @@ function handler(state) {
       res.end();
       return;
     }
+    if (url.pathname === "/v1/event") {
+      return send(200, { __typename: "Split", ratio: "3:1" });
+    }
     if (url.pathname === "/v1/items/nope") {
       return send(404, { error: "not_found", message: "no such item" });
     }
@@ -114,6 +117,14 @@ test("a request body is JSON-encoded", async () => {
     const created = await client.createItem({ name: "w" });
     assert.deepEqual(state.posted, { name: "w" });
     assert.equal(created.id, 7);
+  });
+});
+
+test("a tagged union response carries its tag and the variant fields", async () => {
+  await withServer(async (client) => {
+    const event = await client.getEvent();
+    assert.equal(event.__typename, "Split");
+    assert.equal(event.ratio, "3:1");
   });
 });
 

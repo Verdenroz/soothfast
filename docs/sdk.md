@@ -27,7 +27,13 @@ stays declarative.
 Every typing question is answered once, before either emitter sees the
 model. `lower` turns the JSON Schema IR into a language-neutral `Sdk`:
 schemas become `Model`s, operations become `Method`s, and each type node
-becomes a `Ty`. A `oneOf` becomes a union the runtime decodes structurally.
+becomes a `Ty`. A `oneOf` becomes a union the runtime decodes structurally,
+unless every arm carries a distinct string `const` on one shared property
+(an inline object, an `allOf` of a tag-only object and a `$ref`, or a `$ref`
+to a component with the tag; an OpenAPI `discriminator` names the property
+when present). That becomes `Ty::Tagged`: TypeScript intersects each arm with
+its literal tag, and Python dispatches on the tag value, raising `ValueError`
+for one it has no arm for.
 A gap the schema engine could not resolve becomes `Ty::Any` plus a reported
 note, rather than a guess that would typecheck and then fail on the wire.
 <!-- /soothfast:bind -->

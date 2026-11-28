@@ -7,7 +7,8 @@ sys.dont_write_bytecode = True
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1] / "goldens" / "python" / "src"))
-from acme_items import Client, Item, NewItem, RateLimitError, NotFoundError
+from acme_items import Client, Earnings, Item, Notice, NewItem, RateLimitError, NotFoundError
+from acme_items.models import NoticeCancelled, Split
 from acme_items._runtime import decode, to_wire
 
 
@@ -97,6 +98,39 @@ def test_generated_sdk_end_to_end():
             got = [i.id async for i in ac.iter_list_items(limit=1)]
             assert got == [1, 2], got
     asyncio.run(main())
+    server.shutdown()
+
+
+def test_tagged_union_decodes_into_the_arm_the_tag_names():
+    assert decode(Notice, {"__typename": "Earnings", "symbol": "AAPL"}) == Earnings(symbol="AAPL")
+    assert decode(Notice, {"__typename": "Split", "ratio": "2:1"}) == Split(ratio="2:1")
+    cancelled = decode(Notice, {"__typename": "Cancelled", "reason": "halt"})
+    assert cancelled == NoticeCancelled(typename="Cancelled", reason="halt")
+    assert to_wire(cancelled) == {"__typename": "Cancelled", "reason": "halt"}
+
+
+def test_tagged_union_refuses_an_unknown_or_missing_tag():
+    import pytest
+    with pytest.raises(ValueError):
+        decode(Notice, {"__typename": "Dividend"})
+    with pytest.raises(ValueError):
+        decode(Notice, {"symbol": "AAPL"})
+
+
+def test_tagged_union_decodes_a_client_response():
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def do_GET(self):
+            body = b'{"__typename": "Split", "ratio": "3:1"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body)
+
+    server = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    with Client(f"http://127.0.0.1:{server.server_address[1]}") as client:
+        assert client.get_event() == Split(ratio="3:1")
     server.shutdown()
 
 
