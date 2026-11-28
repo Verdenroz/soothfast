@@ -90,8 +90,8 @@ calls it once, outside the measured region, and every iteration's future runs
 through `E::block_on`. Polls and wakes are not counted for these items.
 
 `impl Executor for tokio::runtime::Runtime` is behind the `tokio` feature of
-`soothfast` (and `soothfast-measure`), off by default so the dependency tree
-does not change. Anything else implements the one-method trait itself.
+`soothfast`, off by default so the dependency tree does not change. Anything
+else implements the one-method trait itself.
 
 With an executor, `setup` and `setup_sized` may be `async fn`s. They run on
 the same executor, outside measurement, so a client or mock server that needs
