@@ -338,6 +338,28 @@ mod tests {
     }
 
     #[test]
+    fn a_files_claim_does_not_move_a_lane_for_an_ignored_file() {
+        let repo = repo("lane-fp-claim");
+        let ignoring = || {
+            let mut test = TestConfig {
+                ignore: vec!["**/*.txt".into()],
+                ..TestConfig::default()
+            };
+            test.packages.insert(
+                "lib".into(),
+                AllowList {
+                    header: String::new(),
+                    files: vec!["data.txt".into()],
+                },
+            );
+            test
+        };
+        let before = print(&repo, ignoring(), "rust:app", "app");
+        repo.write("lib/data.txt", "x");
+        assert_eq!(before, print(&repo, ignoring(), "rust:app", "app"));
+    }
+
+    #[test]
     fn a_package_allow_list_does_not_narrow_a_lane() {
         let repo = repo("lane-fp-allow");
         let narrow = || {

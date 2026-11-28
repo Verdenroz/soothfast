@@ -95,30 +95,43 @@ pub enum Scope<'a> {
     Workspace,
 }
 
-/// What a change to `file` reaches. A declared input wins over `ignore`,
-/// `ignore` wins over a build-wide file, and a build-wide file or the
-/// package's own manifest wins over the owning package's allow-list.
+/// What a change to `file` reaches. A declared input wins over everything,
+/// then a file the owning package lists in its `files` claim wins over
+/// `ignore`. `ignore` wins over a build-wide file, and a build-wide file or
+/// the package's own manifest wins over the owning package's allow-list.
 pub fn classify<'a>(pkgs: &'a [Package], cfg: &TestConfig, file: &str) -> Scope<'a> {
     if matches_any(&cfg.inputs, file) {
         return Scope::Workspace;
     }
+    let owned = owner(pkgs, file).map(|pkg| {
+        let rel = match pkg.dir.as_str() {
+            "" => file,
+            dir => &file[dir.len() + 1..],
+        };
+        (pkg, rel)
+    });
     if matches_any(&cfg.ignore, file) {
-        return Scope::Ignored;
+        return match owned {
+            Some((pkg, rel)) if claims(cfg, pkg, rel) => Scope::Package(&pkg.name),
+            _ => Scope::Ignored,
+        };
     }
     if GLOBAL_FILES.contains(&file) {
         return Scope::Workspace;
     }
-    let Some(pkg) = owner(pkgs, file) else {
+    let Some((pkg, rel)) = owned else {
         return Scope::Workspace;
-    };
-    let rel = match pkg.dir.as_str() {
-        "" => file,
-        dir => &file[dir.len() + 1..],
     };
     match cfg.packages.get(&pkg.name) {
         Some(list) if rel != "Cargo.toml" && !matches_any(&list.files, rel) => Scope::Ignored,
         _ => Scope::Package(&pkg.name),
     }
+}
+
+fn claims(cfg: &TestConfig, pkg: &Package, rel: &str) -> bool {
+    cfg.packages
+        .get(&pkg.name)
+        .is_some_and(|list| matches_any(&list.files, rel))
 }
 
 /// Select the packages `changed` (root-relative paths) can affect.
@@ -369,6 +382,45 @@ mod tests {
     }
 
     #[test]
+    fn a_package_files_claim_wins_over_ignore() {
+        let mut cfg = TestConfig {
+            ignore: vec!["**/*.md".into()],
+            ..TestConfig::default()
+        };
+        allow(&mut cfg, "core", &["src/**", "NOTES.md"]);
+        let sel = select(&graph(), &files(&["core/NOTES.md"]), &cfg);
+        assert_eq!(names(&sel), ["cli", "core", "server"]);
+    }
+
+    #[test]
+    fn an_ignored_file_no_package_claims_selects_nothing() {
+        let mut cfg = TestConfig {
+            ignore: vec!["**/*.md".into()],
+            ..TestConfig::default()
+        };
+        allow(&mut cfg, "core", &["src/**"]);
+        let sel = select(
+            &graph(),
+            &files(&["core/NOTES.md", "server/NOTES.md"]),
+            &cfg,
+        );
+        assert!(sel.names.is_empty());
+        assert_eq!(sel.everything_because, None);
+    }
+
+    #[test]
+    fn a_declared_input_wins_over_a_claim_and_ignore() {
+        let mut cfg = TestConfig {
+            ignore: vec!["**/*.md".into()],
+            inputs: vec!["core/NOTES.md".into()],
+            ..TestConfig::default()
+        };
+        allow(&mut cfg, "core", &["NOTES.md"]);
+        let sel = select(&graph(), &files(&["core/NOTES.md"]), &cfg);
+        assert_eq!(sel.names.len(), 5);
+    }
+
+    #[test]
     fn a_file_outside_every_package_selects_everything() {
         let sel = select(&graph(), &files(&["README.md"]), &TestConfig::default());
         assert_eq!(sel.names.len(), 5);
@@ -516,13 +568,13 @@ mod tests {
     fn inputs_ignore_and_build_wide_files_keep_their_precedence_over_a_list() {
         let mut cfg = TestConfig {
             inputs: vec!["fixtures/**".into()],
-            ignore: vec!["src/generated/**".into()],
+            ignore: vec!["generated/**".into()],
             ..TestConfig::default()
         };
         allow(&mut cfg, "app", &["src/**"]);
         let pkgs = rooted();
         assert_eq!(classify(&pkgs, &cfg, "fixtures/a.json"), Scope::Workspace);
-        assert_eq!(classify(&pkgs, &cfg, "src/generated/x.rs"), Scope::Ignored);
+        assert_eq!(classify(&pkgs, &cfg, "generated/x.rs"), Scope::Ignored);
         for global in ["Cargo.toml", "Cargo.lock", ".cargo/config.toml"] {
             assert_eq!(classify(&pkgs, &cfg, global), Scope::Workspace, "{global}");
         }
