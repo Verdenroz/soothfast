@@ -14,6 +14,11 @@ class ApiResponse_Item:
 
 
 @dataclasses.dataclass(frozen=True)
+class Earnings:
+    symbol: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class Item:
     """One item."""
 
@@ -33,3 +38,21 @@ class Item:
 @dataclasses.dataclass(frozen=True)
 class NewItem:
     name: str
+
+
+@dataclasses.dataclass(frozen=True)
+class NoticeCancelled:
+    typename: typing.Literal["Cancelled"]
+    reason: str | None = None
+
+    _WIRE: typing.ClassVar[dict[str, str]] = {
+        "typename": "__typename",
+    }
+
+
+@dataclasses.dataclass(frozen=True)
+class Split:
+    ratio: str | None = None
+
+
+Notice = Earnings | Split | NoticeCancelled

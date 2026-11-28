@@ -88,6 +88,16 @@ class Client:
             f"/v1/items/{path_seg(id)}",
         )
 
+    def get_event(
+        self,
+    ) -> models.Notice:
+        """Get the next event."""
+        return self._transport.request(
+            "GET",
+            "/v1/event",
+            into=models.Notice,
+        )
+
     def get_item(
         self,
         id: str,
@@ -196,6 +206,16 @@ class AsyncClient:
         return await self._transport.request(
             "DELETE",
             f"/v1/items/{path_seg(id)}",
+        )
+
+    async def get_event(
+        self,
+    ) -> models.Notice:
+        """Get the next event."""
+        return await self._transport.request(
+            "GET",
+            "/v1/event",
+            into=models.Notice,
         )
 
     async def get_item(

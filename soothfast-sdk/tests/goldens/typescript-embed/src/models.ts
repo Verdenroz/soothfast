@@ -7,6 +7,10 @@ export interface ApiResponse_Item {
   status: "ok" | "error";
 }
 
+export interface Earnings {
+  symbol?: string;
+}
+
 /** One item. */
 export interface Item {
   from?: string;
@@ -19,3 +23,14 @@ export interface Item {
 export interface NewItem {
   name: string;
 }
+
+export interface NoticeCancelled {
+  __typename: "Cancelled";
+  reason?: string;
+}
+
+export interface Split {
+  ratio?: string;
+}
+
+export type Notice = ({ __typename: "Earnings" } & Earnings) | ({ __typename: "Split" } & Split) | ({ __typename: "Cancelled" } & NoticeCancelled);
