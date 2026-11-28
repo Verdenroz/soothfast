@@ -3,29 +3,37 @@
 
 use std::path::PathBuf;
 
+use super::docs::baseline_files;
 use super::env::CiEnv;
-use crate::lanes::save::save;
+use crate::lanes::save::{Baseline, save};
 use crate::lanes::store::{Pass, Store};
 use crate::verdict::plain_passes;
 
-/// Entry point for `ci lanes`: `save --lanes DIR`, where `DIR` holds the
-/// plan's `lanes.json`, with the results directory the run's global
-/// `--results`.
+/// Entry point for `ci lanes`: `save --lanes DIR [--baselines DIR]`, where
+/// `DIR` holds the plan's `lanes.json` and the second the gate legs'
+/// baselines, with the results directory the run's global `--results`.
 pub fn run(env: &CiEnv, args: &[String]) -> i32 {
-    match parse(args).and_then(|dir| stored(env, dir)) {
+    match parse(args).and_then(|(dir, baselines)| stored(env, dir, baselines)) {
         Ok(()) => 0,
         Err(e) => crate::arg_err(&e),
     }
 }
 
-fn parse(args: &[String]) -> Result<PathBuf, String> {
+type Parsed = (PathBuf, Option<PathBuf>);
+
+fn parse(args: &[String]) -> Result<Parsed, String> {
     match args {
-        [save, flag, dir] if save == "save" && flag == "--lanes" => Ok(PathBuf::from(dir)),
-        _ => Err("usage: cargo soothfast ci lanes save --lanes DIR".into()),
+        [save, flag, dir] if save == "save" && flag == "--lanes" => Ok((PathBuf::from(dir), None)),
+        [save, flag, dir, more, baselines]
+            if save == "save" && flag == "--lanes" && more == "--baselines" =>
+        {
+            Ok((PathBuf::from(dir), Some(PathBuf::from(baselines))))
+        }
+        _ => Err("usage: cargo soothfast ci lanes save --lanes DIR [--baselines DIR]".into()),
     }
 }
 
-fn stored(env: &CiEnv, dir: PathBuf) -> Result<(), String> {
+fn stored(env: &CiEnv, dir: PathBuf, baselines: Option<PathBuf>) -> Result<(), String> {
     let results = env
         .results
         .as_ref()
@@ -36,7 +44,14 @@ fn stored(env: &CiEnv, dir: PathBuf) -> Result<(), String> {
         return Ok(());
     };
     let store = Store::open().ok_or("cannot open .soothfast/lanes")?;
-    let saved = save(&listing, &plain_passes(results), &store, &pass(env)?)?;
+    let measured = baselines.as_deref().map(read_baselines).unwrap_or_default();
+    let saved = save(
+        &listing,
+        &plain_passes(results),
+        &measured,
+        &store,
+        &pass(env)?,
+    )?;
     println!("lanes: stored {saved} passed lane(s)");
     Ok(())
 }
@@ -45,7 +60,24 @@ fn stored(env: &CiEnv, dir: PathBuf) -> Result<(), String> {
 fn pass(env: &CiEnv) -> Result<Pass, String> {
     let commit = env.head.clone().ok_or("lanes needs the run's commit")?;
     let run = std::env::var("GITHUB_RUN_ID").unwrap_or_default();
-    Ok(Pass { commit, run })
+    Ok(Pass {
+        commit,
+        run,
+        baseline: None,
+    })
+}
+
+/// The baselines under `dir` that parse. One that does not leaves its lane
+/// stored without a baseline, which only costs a run.
+fn read_baselines(dir: &std::path::Path) -> Vec<Baseline> {
+    baseline_files(dir)
+        .into_iter()
+        .filter_map(|file| {
+            let doc = serde_json::from_str(&std::fs::read_to_string(&file).ok()?).ok()?;
+            let stem = file.file_stem()?.to_string_lossy().into_owned();
+            Some((stem, doc))
+        })
+        .collect()
 }
 
 /// The plan's listing, or none when the plan wrote nothing.
@@ -66,7 +98,11 @@ mod tests {
         let argv = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
             parse(&argv(&["save", "--lanes", "d"])),
-            Ok(PathBuf::from("d"))
+            Ok((PathBuf::from("d"), None))
+        );
+        assert_eq!(
+            parse(&argv(&["save", "--lanes", "d", "--baselines", "b"])),
+            Ok((PathBuf::from("d"), Some(PathBuf::from("b"))))
         );
         assert!(parse(&argv(&["save"])).is_err());
         assert!(parse(&argv(&["load", "--lanes", "d"])).is_err());

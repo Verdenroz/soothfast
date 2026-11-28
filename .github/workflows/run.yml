@@ -637,8 +637,16 @@ jobs:
           pattern: soothfast-lanes-attempt-*
           path: ${{ runner.temp }}/lanes
           merge-multiple: true
+      # A lane's pass keeps what its gate measured, so a later run can carry the gate under the docs check.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: soothfast-baseline-*
+          path: ${{ runner.temp }}/baselines
+      - name: Keep the latest attempt's measurements
+        run: ./.soothfast-action/action/latest-attempt.sh "$RUNNER_TEMP/baselines"
       - name: Store the lanes that passed
-        run: cargo soothfast ci lanes save --lanes "$RUNNER_TEMP/lanes"
+        run: cargo soothfast ci lanes save --lanes "$RUNNER_TEMP/lanes" --baselines "$RUNNER_TEMP/baselines"
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .soothfast/lanes

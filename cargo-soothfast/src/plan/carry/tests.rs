@@ -105,6 +105,7 @@ fn pass_all(p: &Plan, repo: &TempRepo, site: Option<&Site>) -> (TempDir, Store) 
         let pass = Pass {
             commit: PASSED.into(),
             run: "1".into(),
+            baseline: None,
         };
         store.record(&u.lane.id, &u.key, &pass);
     }
@@ -138,6 +139,7 @@ fn pass_head(repo: &TempRepo, store: &Store, changed: &[&str], base: &str) {
         let pass = Pass {
             commit: "feedface".into(),
             run: "2".into(),
+            baseline: None,
         };
         store.record(&u.lane.id, &u.key, &pass);
     }

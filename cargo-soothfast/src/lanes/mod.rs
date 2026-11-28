@@ -10,5 +10,6 @@ pub mod delta;
 pub mod graph;
 pub mod inputs;
 pub mod save;
+pub mod slice;
 pub mod store;
 pub mod tool;

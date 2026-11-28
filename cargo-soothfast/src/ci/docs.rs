@@ -250,7 +250,7 @@ fn situation(env: &CiEnv, opts: &Options) -> Result<Situation, String> {
 /// The `*.json` files in `dir` and one directory down. Several downloaded
 /// artifacts each land in a directory of their own, and a lone one lands in
 /// `dir` itself.
-fn baseline_files(dir: &Path) -> Vec<PathBuf> {
+pub(super) fn baseline_files(dir: &Path) -> Vec<PathBuf> {
     let entries = |d: &Path| -> Vec<PathBuf> {
         let listed = fs::read_dir(d).into_iter().flatten().flatten();
         listed.map(|e| e.path()).collect()

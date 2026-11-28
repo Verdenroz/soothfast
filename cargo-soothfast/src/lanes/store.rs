@@ -1,6 +1,7 @@
 //! The passes the default branch recorded, one small file each.
 
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use serde_json::{Value, json};
 
@@ -8,6 +9,10 @@ use crate::runcache::{self, hashed};
 
 /// Passes kept before the oldest are dropped.
 const KEEP: usize = 2048;
+
+/// Bytes the passes may take together. A pass holds its lane's baseline, and
+/// the plan job restores the whole store on every run.
+const KEEP_BYTES: u64 = 32 << 20;
 
 /// The key a lane's pass is stored under. `base_delta` names how the base
 /// the pass was judged against differs from the current one; it is empty
@@ -27,11 +32,14 @@ pub fn is_key(key: &str) -> bool {
     key.len() == 16 && key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Where a lane passed.
-#[derive(Debug, PartialEq)]
+/// Where a lane passed, and the measurements the passing run left for the
+/// lane's items. A pass stored without them cannot stand in for a measuring
+/// job.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Pass {
     pub commit: String,
     pub run: String,
+    pub baseline: Option<Value>,
 }
 
 /// Passes of lanes, keyed by [`key`].
@@ -65,6 +73,7 @@ impl Store {
         Some(Pass {
             commit: doc["commit"].as_str()?.to_string(),
             run: doc["run"].as_str()?.to_string(),
+            baseline: doc.get("baseline").cloned(),
         })
     }
 
@@ -72,9 +81,34 @@ impl Store {
     ///
     /// Best effort: a pass that cannot be written costs a run, nothing else.
     pub fn record(&self, lane: &str, key: &str, pass: &Pass) {
-        let doc = json!({"lane": lane, "commit": pass.commit, "run": pass.run});
+        let mut doc = json!({"lane": lane, "commit": pass.commit, "run": pass.run});
+        if let Some(baseline) = &pass.baseline {
+            doc["baseline"] = baseline.clone();
+        }
         if std::fs::write(self.dir.join(key), format!("{doc}\n")).is_ok() {
-            runcache::prune_oldest(&self.dir, KEEP);
+            self.prune();
+        }
+    }
+
+    /// Drops the oldest passes past [`KEEP`] files or [`KEEP_BYTES`].
+    fn prune(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        let mut files: Vec<(SystemTime, PathBuf, u64)> = entries
+            .flatten()
+            .filter_map(|e| {
+                let meta = e.metadata().ok()?;
+                Some((meta.modified().ok()?, e.path(), meta.len()))
+            })
+            .collect();
+        files.sort_by_key(|(time, ..)| std::cmp::Reverse(*time));
+        let mut bytes = 0;
+        for (i, (_, path, len)) in files.into_iter().enumerate() {
+            bytes += len;
+            if i >= KEEP || bytes > KEEP_BYTES {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
 }
@@ -89,6 +123,7 @@ mod tests {
         Pass {
             commit: commit.into(),
             run: "7".into(),
+            baseline: None,
         }
     }
 
@@ -114,6 +149,43 @@ mod tests {
         assert_eq!(s.lookup("rust:core", &k), None);
         s.record("rust:core", &k, &pass("abc"));
         assert_eq!(s.lookup("rust:core", &k), Some(pass("abc")));
+    }
+
+    #[test]
+    fn a_baseline_reads_back_and_an_old_pass_has_none() {
+        let dir = TempDir::new("lane-store-baseline");
+        let s = store(&dir);
+        let k = key("rust:core", "f1", "");
+        let with = Pass {
+            baseline: Some(json!({"items": {"a": {}}})),
+            ..pass("abc")
+        };
+        s.record("rust:core", &k, &with);
+        assert_eq!(s.lookup("rust:core", &k), Some(with));
+        let old = key("rust:core", "f2", "");
+        std::fs::write(
+            dir.join(&old),
+            r#"{"lane":"rust:core","commit":"abc","run":"7"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.lookup("rust:core", &old), Some(pass("abc")));
+    }
+
+    #[test]
+    fn recording_prunes_the_oldest_past_the_byte_limit() {
+        let dir = TempDir::new("lane-store-bytes");
+        let s = store(&dir);
+        let base = SystemTime::now() - Duration::from_secs(10_000);
+        let big = "x".repeat(KEEP_BYTES as usize / 4);
+        for i in 0..4 {
+            let path = dir.join(format!("old{i}"));
+            std::fs::write(&path, &big).unwrap();
+            set_modified(&path, base + Duration::from_secs(i));
+        }
+        s.record("docs", "fresh", &pass("abc"));
+        assert!(dir.join("fresh").exists());
+        assert!(dir.join("old3").exists());
+        assert!(!dir.join("old0").exists());
     }
 
     #[test]
