@@ -30,6 +30,18 @@ pub enum Ty {
     Literal(Vec<String>),
 }
 
+impl Ty {
+    /// Whether this type, or any type nested in it, is a [`Ty::Tagged`].
+    pub fn contains_tagged(&self) -> bool {
+        match self {
+            Ty::Tagged { .. } => true,
+            Ty::List(t) | Ty::Map(t) | Ty::Optional(t) => t.contains_tagged(),
+            Ty::Union(arms) => arms.iter().any(Ty::contains_tagged),
+            _ => false,
+        }
+    }
+}
+
 /// One field of a [`Model`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
@@ -103,4 +115,27 @@ pub struct Sdk {
     pub methods: Vec<Method>,
     /// What lowering could not express precisely, deduplicated.
     pub notes: Vec<String>,
+}
+
+impl Method {
+    /// Whether any type the method mentions is a [`Ty::Tagged`].
+    pub fn uses_tagged(&self) -> bool {
+        self.params
+            .iter()
+            .map(|p| &p.ty)
+            .chain(self.body.as_ref())
+            .chain([&self.ok])
+            .any(Ty::contains_tagged)
+    }
+}
+
+impl Sdk {
+    /// Whether any model field or alias is a [`Ty::Tagged`].
+    pub fn models_use_tagged(&self) -> bool {
+        self.models
+            .iter()
+            .flat_map(|m| m.fields.iter().map(|f| &f.ty))
+            .chain(self.aliases.iter().map(|(_, ty)| ty))
+            .any(Ty::contains_tagged)
+    }
 }

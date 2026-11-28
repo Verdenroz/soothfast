@@ -5,6 +5,8 @@ from __future__ import annotations
 import dataclasses
 import typing
 
+from ._runtime import Tagged
+
 
 @dataclasses.dataclass(frozen=True)
 class ApiResponse_Item:
@@ -55,4 +57,4 @@ class Split:
     ratio: str | None = None
 
 
-Notice = Earnings | Split | NoticeCancelled
+Notice = typing.Annotated[Earnings | Split | NoticeCancelled, Tagged("__typename", ("Earnings", Earnings), ("Split", Split), ("Cancelled", NoticeCancelled))]

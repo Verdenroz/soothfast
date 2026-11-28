@@ -14,6 +14,10 @@ pub(crate) fn render(sdk: &Sdk, opts: &SdkOptions) -> String {
     let _ = writeln!(out);
     let _ = writeln!(out, "import dataclasses");
     let _ = writeln!(out, "import typing");
+    if sdk.models_use_tagged() {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "from ._runtime import Tagged");
+    }
 
     for model in &sdk.models {
         let _ = writeln!(out);
