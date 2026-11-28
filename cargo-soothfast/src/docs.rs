@@ -193,11 +193,8 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
     match cfg.resolve_shared(&a.pkgs, Group::Docs) {
-        Ok(defaults) => a.use_defaults(baseline_given, defaults),
-        Err(e) => return err(&e),
-    }
-    match cfg.resolve_each(&a.pkgs, Group::Docs) {
-        Ok(each) => {
+        Ok((defaults, each)) => {
+            a.use_defaults(baseline_given, defaults);
             a.package_features = each
                 .into_iter()
                 .filter_map(|(pkg, s)| Some((pkg, s.features?)))

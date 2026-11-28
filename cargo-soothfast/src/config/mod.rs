@@ -241,11 +241,16 @@ impl Config {
     /// [`Self::resolve`] for a command that settles `features` per package
     /// (see [`Self::resolve_each`]) and reads no coverage minimum: the
     /// packages must agree on every other key. `features` is the shared
-    /// value, or none when they differ.
-    pub fn resolve_shared(&self, pkgs: &[String], group: Group) -> Result<Settings, String> {
+    /// value, or none when they differ. The per-package settings come back
+    /// beside it.
+    pub fn resolve_shared(
+        &self,
+        pkgs: &[String],
+        group: Group,
+    ) -> Result<(Settings, Vec<(String, Settings)>), String> {
         let each = self.resolve_each(pkgs, group)?;
         let Some((first_name, first)) = each.first() else {
-            return self.repo_wide(group);
+            return Ok((self.repo_wide(group)?, each));
         };
         let rest = |s: &Settings| Settings {
             features: None,
@@ -261,10 +266,11 @@ impl Config {
             }
         }
         let agree = each.iter().all(|(_, s)| s.features == first.features);
-        Ok(Settings {
+        let shared = Settings {
             features: first.features.clone().filter(|_| agree),
             ..rest(first)
-        })
+        };
+        Ok((shared, each))
     }
 
     /// [`Self::resolve`] in the `docs` group, except that `features` falls
@@ -485,7 +491,7 @@ mod tests {
             .unwrap();
         let features: Vec<_> = each.iter().map(|(_, s)| s.features.as_deref()).collect();
         assert_eq!(features, [Some("full"), Some("x"), None]);
-        let shared = cfg
+        let (shared, _) = cfg
             .resolve_shared(&pkgs(&["full", "small"]), Group::Docs)
             .unwrap();
         assert_eq!(shared.features, None);
@@ -510,7 +516,7 @@ mod tests {
             .resolve_shared(&pkgs(&["a", "b"]), Group::Docs)
             .unwrap_err();
         assert!(e.contains("a and b") && e.contains("baseline"), "{e}");
-        let agree =
+        let (agree, _) =
             config("[package.a.docs]\nfeatures = \"f\"\n\n[package.b.docs]\nfeatures = \"f\"\n")
                 .resolve_shared(&pkgs(&["a", "b"]), Group::Docs)
                 .unwrap();
