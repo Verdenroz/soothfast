@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::slice;
 use super::store::{Pass, Store, is_key};
+use crate::baseline_merge::CARRIED_KEY;
 
 /// A baseline file of the run: its file stem, which names an import lane, and
 /// its document.
@@ -59,10 +60,15 @@ pub fn save(
     Ok(saved)
 }
 
-/// What the lane `id`, whose gate left `legs` results, measured.
+/// What the lane `id`, whose gate left `legs` results, measured. A carried
+/// file is an earlier run's measurement, not this one's.
 fn measured(id: &str, legs: usize, baselines: &[Baseline]) -> Option<Value> {
     if let Some(package) = id.strip_prefix("rust:") {
-        let docs: Vec<&Value> = baselines.iter().map(|(_, doc)| doc).collect();
+        let docs: Vec<&Value> = baselines
+            .iter()
+            .map(|(_, doc)| doc)
+            .filter(|doc| doc.get(CARRIED_KEY).is_none())
+            .collect();
         return slice::rust(package, &docs, legs);
     }
     let name = id.strip_prefix("import:")?;
@@ -257,6 +263,30 @@ mod tests {
                 .is_some()
         );
         assert_eq!(baseline("import:node"), Some(node));
+    }
+
+    #[test]
+    fn a_carried_file_is_no_leg_of_this_run() {
+        let results = TempDir::new("lane-save-carried");
+        let dir = TempDir::new("lane-save-carried-store");
+        std::fs::create_dir_all(&*results).unwrap();
+        std::fs::create_dir_all(&*dir).unwrap();
+        put(&results, "cli", "pass", json!({}));
+        let store = Store::at(dir.to_path_buf());
+        let lanes = listing(&[("rust:core", &["core"]), ("rust:cli", &["cli"])]);
+        let mut carried = leg(&[("core", &["core::a"]), ("cli", &["cli::stale"])]);
+        carried["carried"] = json!(["core"]);
+        let baselines = [
+            ("rust-core".to_string(), carried),
+            ("head".to_string(), leg(&[("cli", &["cli::x"])])),
+        ];
+        let passed = plain_passes(&results);
+        assert_eq!(save(&lanes, &passed, &baselines, &store, &pass()), Ok(1));
+        assert!(stored(&store, "rust:cli"));
+        assert!(!stored(&store, "rust:core"));
+        let cli = store.lookup("rust:cli", &lane_key("rust:cli")).unwrap();
+        let items = &cli.baseline.unwrap()["items"];
+        assert!(items.get("cli::x").is_some() && items.get("cli::stale").is_none());
     }
 
     #[test]
