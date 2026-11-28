@@ -1165,7 +1165,15 @@ from the merge commit.
 
 A file no package owns (a container file, a workflow, a top-level script) is
 an input of every Rust lane unless `[test] ignore` lists it, so a repository
-gets the most from carrying by keeping `[test] ignore` accurate.
+gets the most from carrying by keeping `[test] ignore` accurate. `[test]
+ignore` is the list that keeps non-member files, such as root markdown, docs
+and ops paths, out of the Rust lanes. Lanes do not apply `[test.packages.NAME]`
+claims, so an ignored file stays out of every lane even when a package claims
+it for its tests.
+
+The docs lane reads every markdown file whatever `[test] ignore` says, so an
+ignored `.md` edit still moves it, and the gates carry with it. An ignored
+file under `[site] docs_dir` that is not markdown moves only the site lane.
 
 A fingerprint cannot see everything, and a lane carries a pass over these
 gaps: inputs outside the repository or fetched from the network, environment

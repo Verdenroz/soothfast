@@ -56,6 +56,16 @@ retries = 2                         # reruns of a failed test binary
 
 `inputs` wins over `ignore`. Ignore only files no test reads.
 
+A file the owning package lists in its `[test.packages.NAME] files` claim (below)
+wins over `ignore`: it selects that package and its dependents even where
+`ignore` matches it. The order is `inputs`, a package's `files` claim,
+`ignore`, the build-wide files, then the owning package's list.
+
+An `ignore` no longer carves a path out of a matching `files` claim, so a
+claim of `src/**` now selects an ignored `src/generated/x.rs`. To exclude a
+generated directory, narrow the claim: move the directory out of the claimed
+glob, or list its sibling subdirectories instead.
+
 `retries` (default 0) reruns each failed test binary alone, through its own
 `cargo test -p PKG --lib` (or `--bin`, `--test`, `--bench NAME`), up to that
 many times. A binary that passes a rerun is flaky: the summary lists it on a
@@ -85,7 +95,7 @@ The globs are relative to the package's manifest directory. A file the
 package owns that matches none of them selects nothing and is left out of
 the package's key, so a new file at the workspace root no longer re-runs
 the root package's tests. `inputs` still wins over the list, `ignore` still
-subtracts from it, and the files that select every package (`Cargo.toml`,
+subtracts what it does not list, and the files that select every package (`Cargo.toml`,
 `Cargo.lock`, the toolchain and cargo config) select every package whatever
 it lists, and a package's own `Cargo.toml` always counts for it. A nested
 member's files belong to the member, not to the root's list. A package without a table keeps every file it owns.

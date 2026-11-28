@@ -83,7 +83,7 @@ fn delta<'a>(
 
 fn inputs<'a>(files: &'a Files, repo: &TempRepo) -> Inputs<'a> {
     let test = TestConfig {
-        ignore: vec!["docs/data.txt".into()],
+        ignore: vec!["docs/data.txt".into(), "docs/ignored.md".into()],
         ..TestConfig::default()
     };
     let setup = Setup {
@@ -285,6 +285,17 @@ fn the_gates_and_the_docs_carry_together_or_not_at_all() {
     assert!(p.carried.is_empty());
     let out = p.outputs();
     assert!(out.contains("packages=core cli\ndocs=true\n"), "{out}");
+}
+
+#[test]
+fn an_ignored_markdown_edit_still_moves_the_docs_and_the_gates_with_it() {
+    let repo = repo("carry-ignored-md");
+    let mut p = documented(&[]);
+    let (_dir, store) = pass_all(&p, &repo, None);
+    repo.write("docs/ignored.md", "2");
+    pull(&mut p, &repo, &store, None, &["docs/ignored.md"]);
+    assert!(p.carried.is_empty());
+    assert!(p.outputs().contains("packages=core cli\ndocs=true\n"));
 }
 
 #[test]
