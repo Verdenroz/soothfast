@@ -93,8 +93,8 @@ macro_rules! bench_main {
 #[doc(hidden)]
 pub mod __private {
     pub use soothfast_registry::{
-        Assertions, Bencher, Executor, FIXTURES, FixtureItem, MEASURED, MOCKS, MeasuredItem,
-        MockSeam, MockSeamItem, ROUTES, RouteItem, Setup, SetupFuture, SetupValue, fnv1a, linkme,
+        Assertions, Bencher, FIXTURES, FixtureItem, MEASURED, MOCKS, MeasuredItem, MockSeam,
+        MockSeamItem, ROUTES, RouteItem, Setup, SetupFuture, SetupValue, fnv1a, linkme,
     };
 }
 
