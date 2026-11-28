@@ -510,7 +510,7 @@ fn executor_misuse(func: &syn::ItemFn, attrs: &Attrs) -> Option<TokenStream> {
     (attrs.executor.is_some() && func.sig.asyncness.is_none()).then(|| {
         err(
             func.sig.ident.span(),
-            "`executor` needs an `async fn`; a sync fn runs without one",
+            "`executor` drives an `async fn`; remove it or make the fn async",
         )
     })
 }

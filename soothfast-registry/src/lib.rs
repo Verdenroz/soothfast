@@ -35,6 +35,13 @@ pub trait Executor {
     fn block_on<F: Future>(&self, fut: F) -> F::Output;
 }
 
+#[cfg(feature = "tokio")]
+impl Executor for tokio::runtime::Runtime {
+    fn block_on<F: Future>(&self, fut: F) -> F::Output {
+        tokio::runtime::Runtime::block_on(self, fut)
+    }
+}
+
 /// Setup output awaiting resolution. Macro glue wraps a setup call in this and
 /// resolves it through [`SetupFuture`] or [`SetupValue`], which method lookup
 /// picks by whether the output is a future. Not user API.
