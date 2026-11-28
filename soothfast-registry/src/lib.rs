@@ -35,6 +35,50 @@ pub trait Executor {
     fn block_on<F: Future>(&self, fut: F) -> F::Output;
 }
 
+/// Setup output awaiting resolution. Macro glue wraps a setup call in this and
+/// resolves it through [`SetupFuture`] or [`SetupValue`], which method lookup
+/// picks by whether the output is a future. Not user API.
+#[doc(hidden)]
+pub struct Setup<T>(Cell<Option<T>>);
+
+impl<T> Setup<T> {
+    pub fn new(value: T) -> Self {
+        Setup(Cell::new(Some(value)))
+    }
+
+    fn take(&self) -> T {
+        self.0.take().expect("setup output taken once")
+    }
+}
+
+/// Resolution for an async setup: block on it. Not user API.
+#[doc(hidden)]
+pub trait SetupFuture {
+    type Out;
+    fn resolve<E: Executor>(self, exec: &E) -> Self::Out;
+}
+
+impl<F: Future> SetupFuture for Setup<F> {
+    type Out = F::Output;
+    fn resolve<E: Executor>(self, exec: &E) -> F::Output {
+        exec.block_on(self.take())
+    }
+}
+
+/// Resolution for a sync setup: pass the value through. Not user API.
+#[doc(hidden)]
+pub trait SetupValue {
+    type Out;
+    fn resolve<E: Executor>(self, exec: &E) -> Self::Out;
+}
+
+impl<T> SetupValue for &Setup<T> {
+    type Out = T;
+    fn resolve<E: Executor>(self, _: &E) -> T {
+        self.take()
+    }
+}
+
 /// Single-use measurement context handed to registered runner glue.
 ///
 /// Generated glue performs setup, then calls [`Bencher::iter`] (or
@@ -570,7 +614,7 @@ pub const fn fnv1a(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
 
-    struct Counting(std::cell::Cell<u64>);
+    struct Counting(Cell<u64>);
 
     impl Executor for Counting {
         fn block_on<F: Future>(&self, fut: F) -> F::Output {
@@ -592,6 +636,15 @@ mod tests {
         });
         assert_eq!(exec.0.get(), 5);
         assert_eq!(runs, 5);
+    }
+
+    #[test]
+    fn setup_resolves_futures_and_plain_values() {
+        use super::{SetupFuture as _, SetupValue as _};
+        let exec = Counting(Cell::new(0));
+        assert_eq!(Setup::new(async { 7 }).resolve(&exec), 7);
+        assert_eq!(Setup::new(8).resolve(&exec), 8);
+        assert_eq!(exec.0.get(), 1);
     }
 
     #[test]
