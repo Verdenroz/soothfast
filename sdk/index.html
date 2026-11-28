@@ -166,6 +166,12 @@ stays declarative.</p>
 model. <code>lower</code> turns the JSON Schema IR into a language-neutral <code>Sdk</code>:
 schemas become <code>Model</code>s, operations become <code>Method</code>s, and each type node
 becomes a <code>Ty</code>. A <code>oneOf</code> becomes a union the runtime decodes structurally.
+When every arm carries a distinct string <code>const</code> on one shared property, it
+becomes a <code>Ty::Tagged</code> instead. An arm can be an inline object, an <code>allOf</code>
+of a tag-only object and a <code>$ref</code>, or a <code>$ref</code> to a component that carries
+the tag, and an OpenAPI <code>discriminator</code> names the property when the spec has
+one. TypeScript intersects each arm with its literal tag. Python picks the
+arm by tag value and raises <code>ValueError</code> for a value it has no arm for.
 A gap the schema engine could not resolve becomes <code>Ty::Any</code> plus a reported
 note, rather than a guess that would typecheck and then fail on the wire.</p>
 <p>The one thing lowering takes an <code>SdkKind</code> for is how wire names are spelled:</p>
