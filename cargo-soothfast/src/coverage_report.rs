@@ -153,7 +153,7 @@ fn outside_gate(pkgs: &[String]) -> Vec<(String, Value)> {
 /// A `--check` whose report could not be built fails only a package that sets
 /// a minimum; any other passes with a note in its output.
 fn could_not_run(pkgs: &[String], error: &str) -> i32 {
-    let settings = config::coverage_defaults(pkgs);
+    let settings = shared_minimums(pkgs);
     let code = unbuilt_exit(&settings);
     if code == 0 {
         println!("{}", skip_note(error));
@@ -175,6 +175,23 @@ fn skip_note(error: &str) -> String {
         "coverage could not run: {}",
         error.lines().next().unwrap_or_default()
     )
+}
+
+/// The coverage minimums `pkgs` are held to together. Their features may
+/// differ, since each package's surface is built with its own.
+fn shared_minimums(pkgs: &[String]) -> Result<Settings, String> {
+    let config = Config::load(&invoke::project_root())?;
+    let each = config.resolve_each(pkgs, Group::Docs)?;
+    let Some((first_name, first)) = each.first() else {
+        return config.resolve_coverage(pkgs);
+    };
+    let held = |s: &Settings| (s.coverage, s.minimums.clone());
+    match each.iter().find(|(_, s)| held(s) != held(first)) {
+        Some((other, _)) => Err(format!(
+            "packages {first_name} and {other} set different coverage minimums; run it once per package"
+        )),
+        None => Ok(first.clone()),
+    }
 }
 
 /// A dimension's tally and the minimum it must reach, where one is set.
@@ -218,7 +235,7 @@ fn figures(rows: &[Row], minimums: &Settings) -> Vec<Figure> {
 /// Prints the unmet minimums and the summary line. Exits 1 when a minimum is
 /// not met and 2 when the configuration cannot be read.
 fn held_to_minimums(rows: &[Row], pkgs: &[String]) -> i32 {
-    let settings = match config::coverage_defaults(pkgs) {
+    let settings = match shared_minimums(pkgs) {
         Ok(settings) => settings,
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -279,7 +296,9 @@ fn rows(
     let marked = marker_targets(&invoke::project_root());
     let config = Config::load(&invoke::project_root()).map_err(|e| (2, e))?;
     for pkg in pkgs {
-        let own = config::coverage_defaults(std::slice::from_ref(pkg)).map_err(|e| (2, e))?;
+        let own = config
+            .resolve_coverage(std::slice::from_ref(pkg))
+            .map_err(|e| (2, e))?;
         let features = features.clone().or(own.features);
         let (surf, _, root) =
             docs_support::surface_in(pkg, None, features.as_deref()).map_err(|e| (1, e))?;

@@ -248,8 +248,9 @@ impl Config {
 
     /// [`Self::resolve`] for a command that settles `features` per package
     /// (see [`Self::resolve_each`]) and reads no coverage minimum: the
-    /// packages must agree on every other key. `features` is the shared
-    /// value, or none when they differ. The per-package settings come back
+    /// packages must agree on every other key. `features` and `target` are
+    /// the shared value, or none when they differ (only single-package
+    /// `docs routes` reads `target`). The per-package settings come back
     /// beside it.
     pub fn resolve_shared(
         &self,
@@ -262,6 +263,7 @@ impl Config {
         };
         let rest = |s: &Settings| Settings {
             features: None,
+            target: None,
             coverage: None,
             minimums: Default::default(),
             ..s.clone()
@@ -273,9 +275,11 @@ impl Config {
                 )));
             }
         }
-        let agree = each.iter().all(|(_, s)| s.features == first.features);
+        let features = each.iter().all(|(_, s)| s.features == first.features);
+        let target = each.iter().all(|(_, s)| s.target == first.target);
         let shared = Settings {
-            features: first.features.clone().filter(|_| agree),
+            features: first.features.clone().filter(|_| features),
+            target: first.target.clone().filter(|_| target),
             ..rest(first)
         };
         Ok((shared, each))
@@ -503,6 +507,19 @@ mod tests {
             .resolve_shared(&pkgs(&["full", "small"]), Group::Docs)
             .unwrap();
         assert_eq!(shared.features, None);
+    }
+
+    #[test]
+    fn shared_resolution_lets_targets_differ_and_shares_an_agreed_one() {
+        let text = "[package.a.docs]\ntarget = \"a-routes\"\n\n[package.b.docs]\ntarget = \"b-routes\"\n";
+        let (shared, _) = config(text)
+            .resolve_shared(&pkgs(&["a", "b"]), Group::Docs)
+            .unwrap();
+        assert_eq!(shared.target, None);
+        let (one, _) = config(text)
+            .resolve_shared(&pkgs(&["a"]), Group::Docs)
+            .unwrap();
+        assert_eq!(one.target.as_deref(), Some("a-routes"));
     }
 
     #[test]
