@@ -115,6 +115,12 @@ def test_tagged_union_refuses_an_unknown_or_missing_tag():
         decode(Notice, {"__typename": "Dividend"})
     with pytest.raises(ValueError):
         decode(Notice, {"symbol": "AAPL"})
+    with pytest.raises(ValueError):
+        decode(Notice, {"__typename": ["Split"]})
+
+
+def test_an_unknown_tag_leaves_the_other_union_arms_to_try():
+    assert decode(Notice | dict, {"__typename": "Dividend"}) == {"__typename": "Dividend"}
 
 
 def test_tagged_union_decodes_a_client_response():

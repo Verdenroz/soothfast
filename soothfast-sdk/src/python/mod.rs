@@ -77,7 +77,7 @@ pub(crate) fn annotation(ty: &Ty, prefix: &str) -> String {
                 .map(|((value, _), ty)| format!("({}, {ty})", naming::string_lit(value)))
                 .collect();
             format!(
-                "typing.Annotated[{}, Tagged({}, {})]",
+                "typing.Annotated[{}, _Tagged({}, {})]",
                 types.join(" | "),
                 naming::string_lit(tag),
                 pairs.join(", ")
@@ -119,7 +119,7 @@ mod tests {
         };
         assert_eq!(
             annotation(&tagged, ""),
-            r#"typing.Annotated[A | B, Tagged("kind", ("Café", A), ("say \"hi\"", B))]"#
+            r#"typing.Annotated[A | B, _Tagged("kind", ("Café", A), ("say \"hi\"", B))]"#
         );
         let literal = Ty::Literal(vec!["é\n".into()]);
         assert_eq!(annotation(&literal, ""), r#"typing.Literal["é\n"]"#);

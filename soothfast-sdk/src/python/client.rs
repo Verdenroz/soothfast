@@ -30,7 +30,7 @@ pub(crate) fn render(sdk: &Sdk, opts: &SdkOptions, base_url: Option<&str>) -> St
         runtime.push("to_wire");
     }
     if sdk.methods.iter().any(Method::uses_tagged) {
-        runtime.push("Tagged");
+        runtime.push("Tagged as _Tagged");
     }
     runtime.push("path_seg");
     runtime.push("query_of");

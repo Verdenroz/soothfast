@@ -279,7 +279,9 @@ fn ty_of(schema: &Value, cx: &mut Cx, at: &str) -> Ty {
         }
         return Ty::Union(arms.iter().map(|a| ty_of(a, cx, at)).collect());
     }
-    if let Some(members) = schema["allOf"].as_array() {
+    if let Some(members) = schema["allOf"].as_array()
+        && is_annotation_only(&without_all_of(schema))
+    {
         let mut substantive = members.iter().filter(|m| !is_annotation_only(m));
         if let (Some(only), None) = (substantive.next(), substantive.next()) {
             return ty_of(only, cx, at);
@@ -334,6 +336,14 @@ fn ty_of(schema: &Value, cx: &mut Cx, at: &str) -> Ty {
         },
         _ => Ty::Any,
     }
+}
+
+fn without_all_of(schema: &Value) -> Value {
+    let mut rest = schema.clone();
+    if let Some(o) = rest.as_object_mut() {
+        o.remove("allOf");
+    }
+    rest
 }
 
 fn is_annotation_only(schema: &Value) -> bool {
@@ -650,6 +660,19 @@ mod tests {
             json!({ "oneOf": [graphql_arm("Earnings"), { "type": "string" }] }),
         );
         assert!(matches!(sdk.methods[0].ok, Ty::Union(_)));
+    }
+
+    #[test]
+    fn an_allof_with_its_own_properties_is_not_collapsed_to_the_ref() {
+        let sdk = lowered(
+            &[payload("Earnings")],
+            json!({
+                "allOf": [{ "$ref": "#/components/schemas/Earnings" }],
+                "type": "object",
+                "properties": { "extra": { "type": "string" } },
+            }),
+        );
+        assert_ne!(sdk.methods[0].ok, Ty::Named("Earnings".into()));
     }
 
     #[test]

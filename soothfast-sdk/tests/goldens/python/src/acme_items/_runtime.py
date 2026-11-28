@@ -142,10 +142,15 @@ def decode(ty: typing.Any, value: typing.Any) -> typing.Any:
     return value
 
 
+def _tag_arm(tagged: Tagged, value: typing.Any) -> typing.Any:
+    tag = value.get(tagged.tag) if isinstance(value, dict) else None
+    return tagged.arms.get(tag) if isinstance(tag, str) else None
+
+
 def _decode_tagged(tagged: Tagged, value: typing.Any) -> typing.Any:
     if not isinstance(value, dict) or tagged.tag not in value:
         raise ValueError(f"expected an object with a {tagged.tag!r} property")
-    arm = tagged.arms.get(value[tagged.tag])
+    arm = _tag_arm(tagged, value)
     if arm is None:
         raise ValueError(f"no union arm for {tagged.tag} {value[tagged.tag]!r}")
     return decode(arm, value)
@@ -169,10 +174,7 @@ def _decode_union(arms: tuple[typing.Any, ...], value: typing.Any) -> typing.Any
 def _matches(ty: typing.Any, value: typing.Any) -> bool:
     if typing.get_origin(ty) is typing.Annotated:
         _, *meta = typing.get_args(ty)
-        return any(
-            isinstance(m, Tagged) and isinstance(value, dict) and m.tag in value
-            for m in meta
-        )
+        return any(isinstance(m, Tagged) and _tag_arm(m, value) is not None for m in meta)
     if dataclasses.is_dataclass(ty) and isinstance(ty, type):
         if not isinstance(value, dict):
             return False

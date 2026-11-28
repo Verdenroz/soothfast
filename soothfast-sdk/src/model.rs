@@ -23,7 +23,9 @@ pub enum Ty {
     /// `oneOf` arms told apart by the string `const` each carries on one
     /// shared property, in `(tag value, arm type)` order.
     Tagged {
+        /// The wire name of the property carrying the tag.
         tag: String,
+        /// Each arm's tag value and type.
         arms: Vec<(String, Ty)>,
     },
     /// A closed set of string values.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import typing
 
-from ._runtime import Tagged
+from ._runtime import Tagged as _Tagged
 
 
 @dataclasses.dataclass(frozen=True)
@@ -57,4 +57,4 @@ class Split:
     ratio: str | None = None
 
 
-Notice = typing.Annotated[Earnings | Split | NoticeCancelled, Tagged("__typename", ("Earnings", Earnings), ("Split", Split), ("Cancelled", NoticeCancelled))]
+Notice = typing.Annotated[Earnings | Split | NoticeCancelled, _Tagged("__typename", ("Earnings", Earnings), ("Split", Split), ("Cancelled", NoticeCancelled))]
