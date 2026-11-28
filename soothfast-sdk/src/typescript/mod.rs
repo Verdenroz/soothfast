@@ -73,6 +73,18 @@ pub(crate) fn annotation(ty: &Ty, prefix: &str) -> String {
             .map(|a| annotation(a, prefix))
             .collect::<Vec<_>>()
             .join(" | "),
+        Ty::Tagged { tag, arms } => arms
+            .iter()
+            .map(|(value, arm)| {
+                format!(
+                    "({{ {}: {} }} & {})",
+                    naming::prop_key(tag),
+                    naming::string_lit(value),
+                    annotation(arm, prefix)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | "),
         Ty::Literal(values) => values
             .iter()
             .map(|v| naming::string_lit(v))
@@ -88,6 +100,7 @@ fn atom(ty: &Ty, prefix: &str) -> String {
     let needs_parens = match ty {
         Ty::Optional(_) => true,
         Ty::Union(arms) => arms.len() > 1,
+        Ty::Tagged { arms, .. } => arms.len() > 1,
         Ty::Literal(values) => values.len() > 1,
         _ => false,
     };

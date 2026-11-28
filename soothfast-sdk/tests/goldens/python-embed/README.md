@@ -44,6 +44,7 @@ Those values win over the ambient environment; anything left out falls back to w
 
 - `create_item` — `POST /v1/items`: Create an item.
 - `delete_item` — `DELETE /v1/items/{id}`: Delete an item.
+- `get_event` — `GET /v1/event`: Get the next event.
 - `get_item` — `GET /v1/items/{id}`: Get one item.
 - `get_stats` — `GET /v1/stats`: Get stats.
 - `list_items` — `GET /v1/items`: List items.

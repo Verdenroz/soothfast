@@ -16,8 +16,12 @@ from .client import AsyncClient, Client
 from ._server import EmbeddedServer, stop_embedded_servers
 from .models import (
     ApiResponse_Item,
+    Earnings,
     Item,
     NewItem,
+    Notice,
+    NoticeCancelled,
+    Split,
 )
 
 __version__ = "1.2.3"
@@ -28,14 +32,18 @@ __all__ = [
     "AsyncClient",
     "BadRequestError",
     "Client",
+    "Earnings",
     "EmbeddedServer",
     "Item",
     "NewItem",
     "NotFoundError",
+    "Notice",
+    "NoticeCancelled",
     "Page",
     "PageInfo",
     "RateLimitError",
     "ServerError",
     "ServiceUnavailableError",
+    "Split",
     "stop_embedded_servers",
 ]

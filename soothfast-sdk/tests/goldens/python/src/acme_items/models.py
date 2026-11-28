@@ -5,12 +5,19 @@ from __future__ import annotations
 import dataclasses
 import typing
 
+from ._runtime import Tagged as _Tagged
+
 
 @dataclasses.dataclass(frozen=True)
 class ApiResponse_Item:
     status: typing.Literal["ok", "error"]
     data: Item | str | None = None
     meta: typing.Any | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class Earnings:
+    symbol: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -33,3 +40,21 @@ class Item:
 @dataclasses.dataclass(frozen=True)
 class NewItem:
     name: str
+
+
+@dataclasses.dataclass(frozen=True)
+class NoticeCancelled:
+    typename: typing.Literal["Cancelled"]
+    reason: str | None = None
+
+    _WIRE: typing.ClassVar[dict[str, str]] = {
+        "typename": "__typename",
+    }
+
+
+@dataclasses.dataclass(frozen=True)
+class Split:
+    ratio: str | None = None
+
+
+Notice = typing.Annotated[Earnings | Split | NoticeCancelled, _Tagged("__typename", ("Earnings", Earnings), ("Split", Split), ("Cancelled", NoticeCancelled))]

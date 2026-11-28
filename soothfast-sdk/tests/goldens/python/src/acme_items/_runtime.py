@@ -106,6 +106,14 @@ def _error_for(response: httpx.Response) -> ApiError:
     return cls(status, error=error, message=message, retry_after=retry_after)
 
 
+class Tagged:
+    """Marks a union whose arm the wire value of one property selects."""
+
+    def __init__(self, tag: str, *arms: tuple[str, typing.Any]) -> None:
+        self.tag = tag
+        self.arms = dict(arms)
+
+
 def decode(ty: typing.Any, value: typing.Any) -> typing.Any:
     """Decode a wire value into ``ty``, a type or typing annotation."""
     if ty is None or ty is type(None):
@@ -113,6 +121,12 @@ def decode(ty: typing.Any, value: typing.Any) -> typing.Any:
     if ty is typing.Any:
         return value
     origin = typing.get_origin(ty)
+    if origin is typing.Annotated:
+        inner, *meta = typing.get_args(ty)
+        for m in meta:
+            if isinstance(m, Tagged):
+                return _decode_tagged(m, value)
+        return decode(inner, value)
     if origin in (typing.Union, types.UnionType):
         return _decode_union(typing.get_args(ty), value)
     if origin is list:
@@ -126,6 +140,20 @@ def decode(ty: typing.Any, value: typing.Any) -> typing.Any:
     if dataclasses.is_dataclass(ty) and isinstance(ty, type):
         return _decode_dataclass(ty, value)
     return value
+
+
+def _tag_arm(tagged: Tagged, value: typing.Any) -> typing.Any:
+    tag = value.get(tagged.tag) if isinstance(value, dict) else None
+    return tagged.arms.get(tag) if isinstance(tag, str) else None
+
+
+def _decode_tagged(tagged: Tagged, value: typing.Any) -> typing.Any:
+    if not isinstance(value, dict) or tagged.tag not in value:
+        raise ValueError(f"expected an object with a {tagged.tag!r} property")
+    arm = _tag_arm(tagged, value)
+    if arm is None:
+        raise ValueError(f"no union arm for {tagged.tag} {value[tagged.tag]!r}")
+    return decode(arm, value)
 
 
 def _decode_union(arms: tuple[typing.Any, ...], value: typing.Any) -> typing.Any:
@@ -144,6 +172,9 @@ def _decode_union(arms: tuple[typing.Any, ...], value: typing.Any) -> typing.Any
 
 
 def _matches(ty: typing.Any, value: typing.Any) -> bool:
+    if typing.get_origin(ty) is typing.Annotated:
+        _, *meta = typing.get_args(ty)
+        return any(isinstance(m, Tagged) and _tag_arm(m, value) is not None for m in meta)
     if dataclasses.is_dataclass(ty) and isinstance(ty, type):
         if not isinstance(value, dict):
             return False
@@ -165,7 +196,7 @@ def _matches(ty: typing.Any, value: typing.Any) -> bool:
 def _decode_dataclass(ty: type, value: typing.Any) -> typing.Any:
     if not isinstance(value, dict):
         raise TypeError(f"{ty.__name__} expects an object, got {type(value).__name__}")
-    hints = typing.get_type_hints(ty)
+    hints = typing.get_type_hints(ty, include_extras=True)
     wire = getattr(ty, "_WIRE", {})
     kwargs = {}
     for f in dataclasses.fields(ty):

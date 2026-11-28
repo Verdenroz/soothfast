@@ -28,6 +28,12 @@ Every typing question is answered once, before either emitter sees the
 model. `lower` turns the JSON Schema IR into a language-neutral `Sdk`:
 schemas become `Model`s, operations become `Method`s, and each type node
 becomes a `Ty`. A `oneOf` becomes a union the runtime decodes structurally.
+When every arm carries a distinct string `const` on one shared property, it
+becomes a `Ty::Tagged` instead. An arm can be an inline object, an `allOf`
+of a tag-only object and a `$ref`, or a `$ref` to a component that carries
+the tag, and an OpenAPI `discriminator` names the property when the spec has
+one. TypeScript intersects each arm with its literal tag. Python picks the
+arm by tag value and raises `ValueError` for a value it has no arm for.
 A gap the schema engine could not resolve becomes `Ty::Any` plus a reported
 note, rather than a guess that would typecheck and then fail on the wire.
 <!-- /soothfast:bind -->

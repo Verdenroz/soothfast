@@ -20,8 +20,28 @@ pub enum Ty {
     Named(String),
     /// `oneOf` arms, matched structurally when decoding.
     Union(Vec<Ty>),
+    /// `oneOf` arms told apart by the string `const` each carries on one
+    /// shared property, in `(tag value, arm type)` order.
+    Tagged {
+        /// The wire name of the property carrying the tag.
+        tag: String,
+        /// Each arm's tag value and type.
+        arms: Vec<(String, Ty)>,
+    },
     /// A closed set of string values.
     Literal(Vec<String>),
+}
+
+impl Ty {
+    /// Whether this type, or any type nested in it, is a [`Ty::Tagged`].
+    pub fn contains_tagged(&self) -> bool {
+        match self {
+            Ty::Tagged { .. } => true,
+            Ty::List(t) | Ty::Map(t) | Ty::Optional(t) => t.contains_tagged(),
+            Ty::Union(arms) => arms.iter().any(Ty::contains_tagged),
+            _ => false,
+        }
+    }
 }
 
 /// One field of a [`Model`].
@@ -97,4 +117,27 @@ pub struct Sdk {
     pub methods: Vec<Method>,
     /// What lowering could not express precisely, deduplicated.
     pub notes: Vec<String>,
+}
+
+impl Method {
+    /// Whether any type the method mentions is a [`Ty::Tagged`].
+    pub fn uses_tagged(&self) -> bool {
+        self.params
+            .iter()
+            .map(|p| &p.ty)
+            .chain(self.body.as_ref())
+            .chain([&self.ok])
+            .any(Ty::contains_tagged)
+    }
+}
+
+impl Sdk {
+    /// Whether any model field or alias is a [`Ty::Tagged`].
+    pub fn models_use_tagged(&self) -> bool {
+        self.models
+            .iter()
+            .flat_map(|m| m.fields.iter().map(|f| &f.ty))
+            .chain(self.aliases.iter().map(|(_, ty)| ty))
+            .any(Ty::contains_tagged)
+    }
 }

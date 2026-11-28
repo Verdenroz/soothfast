@@ -22,6 +22,7 @@ Requires Node 18+ (or any runtime with a global `fetch`).
 
 - `createItem` — `POST /v1/items`: Create an item.
 - `deleteItem` — `DELETE /v1/items/{id}`: Delete an item.
+- `getEvent` — `GET /v1/event`: Get the next event.
 - `getItem` — `GET /v1/items/{id}`: Get one item.
 - `getStats` — `GET /v1/stats`: Get stats.
 - `listItems` — `GET /v1/items`: List items.

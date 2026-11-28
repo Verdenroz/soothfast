@@ -49,6 +49,28 @@ pub(crate) fn sanitize(wire: &str) -> String {
     out
 }
 
+/// A double-quoted string literal as JSON writes it. JSON's escapes are a
+/// subset of both TypeScript's and Python's, and non-ASCII stays as text.
+pub(crate) fn string_lit(value: &str) -> String {
+    serde_json::Value::String(value.to_string()).to_string()
+}
+
+/// PascalCase a name, splitting on anything that is not alphanumeric:
+/// `getCalendar[200]` → `GetCalendar200`, `market_open` → `MarketOpen`.
+pub(crate) fn pascal(name: &str) -> String {
+    name.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .flat_map(|part| {
+            let mut chars = part.chars();
+            chars
+                .next()
+                .map(|first| first.to_ascii_uppercase())
+                .into_iter()
+                .chain(chars)
+        })
+        .collect()
+}
+
 /// A package name as an environment-variable prefix: `acme-items` →
 /// `ACME_ITEMS`, `@acme/items` → `ACME_ITEMS`.
 pub(crate) fn env_prefix(package: &str) -> String {
@@ -75,11 +97,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn string_lit_escapes_quotes_and_controls_and_keeps_non_ascii() {
+        assert_eq!(string_lit("Café"), "\"Café\"");
+        assert_eq!(string_lit("say \"hi\""), r#""say \"hi\"""#);
+        assert_eq!(string_lit("a\\b\n\u{1}"), r#""a\\b\n\u0001""#);
+    }
+
+    #[test]
     fn env_prefixes_survive_scopes_and_punctuation() {
         assert_eq!(env_prefix("acme-items"), "ACME_ITEMS");
         assert_eq!(env_prefix("@acme/items"), "ACME_ITEMS");
         assert_eq!(env_prefix("finance_query"), "FINANCE_QUERY");
         assert_eq!(env_prefix("-"), "SOOTHFAST");
+    }
+
+    #[test]
+    fn pascal_joins_every_alphanumeric_run() {
+        assert_eq!(pascal("getCalendar[200]"), "GetCalendar200");
+        assert_eq!(pascal("market_open"), "MarketOpen");
+        assert_eq!(pascal("Model.field"), "ModelField");
     }
 
     #[test]

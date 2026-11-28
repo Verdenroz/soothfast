@@ -91,6 +91,11 @@ export class Client {
     return this.transport.request<void>("DELETE", `/v1/items/${pathSeg(id)}`);
   }
 
+  /** Get the next event. */
+  getEvent(): Promise<models.Notice> {
+    return this.transport.request<models.Notice>("GET", "/v1/event");
+  }
+
   /** Get one item. */
   getItem(id: string, options: GetItemOptions = {}): Promise<models.Item> {
     return this.transport.request<models.Item>("GET", `/v1/items/${pathSeg(id)}`, {

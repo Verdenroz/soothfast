@@ -1,6 +1,6 @@
 //! Wire names → Python identifiers.
 
-pub(crate) use crate::naming::snake;
+pub(crate) use crate::naming::{snake, string_lit};
 
 /// snake_case plus keyword escaping, for attribute positions.
 pub(crate) fn snake_attr(wire: &str) -> String {

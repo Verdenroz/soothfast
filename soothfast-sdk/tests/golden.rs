@@ -163,7 +163,54 @@ fn fixture() -> Vec<Operation> {
         )
     };
 
-    vec![get_item, create_item, list_items, get_stats, delete_item]
+    let get_event = {
+        let payload = |field: &str| {
+            json!({
+                "type": "object",
+                "properties": { field: { "type": "string" } },
+            })
+        };
+        let graphql_arm = |typename: &str| {
+            json!({ "allOf": [
+                { "type": "object", "properties": { "__typename": { "const": typename } } },
+                { "$ref": format!("#/components/schemas/{typename}") },
+            ] })
+        };
+        let mut shape = RouteShape::default();
+        shape
+            .components
+            .insert("Earnings".into(), payload("symbol"));
+        shape.components.insert("Split".into(), payload("ratio"));
+        shape.components.insert(
+            "Notice".into(),
+            json!({ "oneOf": [
+                graphql_arm("Earnings"),
+                graphql_arm("Split"),
+                {
+                    "type": "object",
+                    "properties": {
+                        "__typename": { "const": "Cancelled" },
+                        "reason": { "type": "string" },
+                    },
+                    "required": ["__typename"],
+                },
+            ] }),
+        );
+        shape.responses.insert(
+            "200".into(),
+            Response::json(json!({ "$ref": "#/components/schemas/Notice" })),
+        );
+        op("getEvent", "GET", "/v1/event", "Get the next event.", shape)
+    };
+
+    vec![
+        get_item,
+        create_item,
+        list_items,
+        get_stats,
+        delete_item,
+        get_event,
+    ]
 }
 
 fn options() -> SdkOptions {
