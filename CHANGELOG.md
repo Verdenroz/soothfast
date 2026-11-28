@@ -32,8 +32,8 @@ tag value and raises `ValueError` on one it has no arm for.
 
 ### ✨ Features
 
-- Run async benches on a caller-supplied executor (#540)
 - Discriminated unions in the Python and TypeScript SDKs (#542)
+- Run async benches on a caller-supplied executor (#540)
 
 ### 🐛 Fixes
 
@@ -43,6 +43,30 @@ tag value and raises `ValueError` on one it has no arm for.
 
 - ci: Hand the bench build to the docs job (#538)
 - ci: Save lane passes beside the verdict (#536)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast
+ADDED    soothfast::Executor
+ADDED    soothfast::registry::Executor
+
+# soothfast-macros
+CHANGED  soothfast_macros::bench (body)
+CHANGED  soothfast_macros::measured (body)
+
+# soothfast-registry
+ADDED    soothfast_registry::Executor
+
+# soothfast-measure
+ADDED    soothfast_measure::Executor
+
+# soothfast-sdk
+CHANGED  soothfast_sdk::lower::lower (body)
+CHANGED  soothfast_sdk::model::Ty (signature)
+```
 
 
 ## 0.9.1 - 2026-11-26
