@@ -50,6 +50,14 @@ pub fn defaults(pkgs: &[String], group: Group) -> Result<Settings, String> {
     Config::load(&invoke::project_root())?.resolve(pkgs, group)
 }
 
+/// [`defaults`] for a command that settles `features` per package, as
+/// [`Config::resolve_shared`] does.
+pub fn defaults_shared(pkgs: &[String], group: Group) -> Result<Settings, String> {
+    Ok(Config::load(&invoke::project_root())?
+        .resolve_shared(pkgs, group)?
+        .0)
+}
+
 /// [`defaults`] of `pkgs` for the `coverage` commands.
 pub fn coverage_defaults(pkgs: &[String]) -> Result<Settings, String> {
     Config::load(&invoke::project_root())?.resolve_coverage(pkgs)
@@ -209,21 +217,72 @@ impl Config {
     /// Packages the file doesn't list resolve to the repo-wide defaults. A
     /// set of packages that resolve differently has no single default.
     pub fn resolve(&self, pkgs: &[String], group: Group) -> Result<Settings, String> {
-        let tables = package::parse(&self.text).map_err(|e| self.located(e))?;
-        let mut each = pkgs.iter().map(|p| {
-            let settings = tables.get(p).map(|t| t.settings(group));
-            (p, settings.unwrap_or_default())
-        });
-        let first = each.next();
-        if let Some((name, first)) = &first
-            && let Some((other, _)) = each.find(|(_, s)| s != first)
-        {
+        let each = self.resolve_each(pkgs, group)?;
+        let Some((first_name, first)) = each.first() else {
+            return self.repo_wide(group);
+        };
+        if let Some((other, _)) = each.iter().find(|(_, s)| s != first) {
             return Err(self.located(format!(
-                "packages {name} and {other} resolve different {group} defaults; run it once per package"
+                "packages {first_name} and {other} resolve different {group} defaults; run it once per package"
             )));
         }
-        let own = first.map(|(_, s)| s).unwrap_or_default();
-        Ok(own.or(self.repo_wide(group)?))
+        Ok(first.clone())
+    }
+
+    /// What each of `pkgs` resolves to in `group`, in the order given.
+    pub fn resolve_each(
+        &self,
+        pkgs: &[String],
+        group: Group,
+    ) -> Result<Vec<(String, Settings)>, String> {
+        let tables = package::parse(&self.text).map_err(|e| self.located(e))?;
+        let repo_wide = self.repo_wide(group)?;
+        Ok(pkgs
+            .iter()
+            .map(|p| {
+                let own = tables.get(p).map(|t| t.settings(group)).unwrap_or_default();
+                (p.clone(), own.or(repo_wide.clone()))
+            })
+            .collect())
+    }
+
+    /// [`Self::resolve`] for a command that settles `features` per package
+    /// (see [`Self::resolve_each`]) and reads no coverage minimum: the
+    /// packages must agree on every other key. `features` and `target` are
+    /// the shared value, or none when they differ (only single-package
+    /// `docs routes` reads `target`). The per-package settings come back
+    /// beside it.
+    pub fn resolve_shared(
+        &self,
+        pkgs: &[String],
+        group: Group,
+    ) -> Result<(Settings, Vec<(String, Settings)>), String> {
+        let each = self.resolve_each(pkgs, group)?;
+        let Some((first_name, first)) = each.first() else {
+            return Ok((self.repo_wide(group)?, each));
+        };
+        let rest = |s: &Settings| Settings {
+            features: None,
+            target: None,
+            coverage: None,
+            minimums: Default::default(),
+            ..s.clone()
+        };
+        for (other, settings) in &each {
+            if let Some(key) = rest(first).differing_key(&rest(settings)) {
+                return Err(self.located(format!(
+                    "packages {first_name} and {other} resolve different {group} {key}; run it once per package"
+                )));
+            }
+        }
+        let features = each.iter().all(|(_, s)| s.features == first.features);
+        let target = each.iter().all(|(_, s)| s.target == first.target);
+        let shared = Settings {
+            features: first.features.clone().filter(|_| features),
+            target: first.target.clone().filter(|_| target),
+            ..rest(first)
+        };
+        Ok((shared, each))
     }
 
     /// [`Self::resolve`] in the `docs` group, except that `features` falls
@@ -432,6 +491,62 @@ mod tests {
         assert!(e.contains("core and other") && e.contains("docs"), "{e}");
         let same = config(TEXT).resolve(&pkgs(&["core", "core"]), Group::Docs);
         assert!(same.is_ok());
+    }
+
+    #[test]
+    fn packages_with_differing_docs_tables_each_resolve_their_own() {
+        let text =
+            "[package.full.docs]\nfeatures = \"full\"\n\n[package.small]\nfeatures = \"x\"\n";
+        let cfg = config(text);
+        let each = cfg
+            .resolve_each(&pkgs(&["full", "small", "bare"]), Group::Docs)
+            .unwrap();
+        let features: Vec<_> = each.iter().map(|(_, s)| s.features.as_deref()).collect();
+        assert_eq!(features, [Some("full"), Some("x"), None]);
+        let (shared, _) = cfg
+            .resolve_shared(&pkgs(&["full", "small"]), Group::Docs)
+            .unwrap();
+        assert_eq!(shared.features, None);
+    }
+
+    #[test]
+    fn shared_resolution_lets_targets_differ_and_shares_an_agreed_one() {
+        let text =
+            "[package.a.docs]\ntarget = \"a-routes\"\n\n[package.b.docs]\ntarget = \"b-routes\"\n";
+        let (shared, _) = config(text)
+            .resolve_shared(&pkgs(&["a", "b"]), Group::Docs)
+            .unwrap();
+        assert_eq!(shared.target, None);
+        let (one, _) = config(text)
+            .resolve_shared(&pkgs(&["a"]), Group::Docs)
+            .unwrap();
+        assert_eq!(one.target.as_deref(), Some("a-routes"));
+    }
+
+    #[test]
+    fn shared_resolution_lets_coverage_minimums_differ_but_not_paths() {
+        let text = "[package.a.docs]\ncoverage = 80\ncoverage_min.measured = 5\n\n[package.b.docs]\ncoverage = 90\n";
+        let cfg = config(text);
+        assert!(cfg.resolve_shared(&pkgs(&["a", "b"]), Group::Docs).is_ok());
+        let paths = "[package.a.docs]\npaths = [\"x\"]\n";
+        let e = config(paths)
+            .resolve_shared(&pkgs(&["a", "b"]), Group::Docs)
+            .unwrap_err();
+        assert!(e.contains("paths"), "{e}");
+    }
+
+    #[test]
+    fn shared_resolution_still_refuses_keys_that_cannot_differ() {
+        let text = "[package.a.docs]\nbaseline = \"x\"\nfeatures = \"f\"\n\n[package.b.docs]\nfeatures = \"g\"\n";
+        let e = config(text)
+            .resolve_shared(&pkgs(&["a", "b"]), Group::Docs)
+            .unwrap_err();
+        assert!(e.contains("a and b") && e.contains("baseline"), "{e}");
+        let (agree, _) =
+            config("[package.a.docs]\nfeatures = \"f\"\n\n[package.b.docs]\nfeatures = \"f\"\n")
+                .resolve_shared(&pkgs(&["a", "b"]), Group::Docs)
+                .unwrap();
+        assert_eq!(agree.features.as_deref(), Some("f"));
     }
 
     #[test]

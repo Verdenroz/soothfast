@@ -1,7 +1,7 @@
 //! `cargo soothfast docs <check|accept|gen-tests|capture|diff|reference|stats>` —
 //! the docs-engine commands, driving `soothfast-docs`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -30,6 +30,9 @@ struct DocsArgs {
     /// `docs accept` drops locked binds no scanned page binds.
     allow_gone: bool,
     features: Option<String>,
+    /// Each `-p` package's own `features`, for a surface built without
+    /// `--features`.
+    package_features: BTreeMap<String, String>,
     /// `docs routes` `[[bench]]` target to link the route registry from.
     target: Option<String>,
     /// `docs serve` bind address (HOST:PORT).
@@ -57,6 +60,13 @@ impl DocsArgs {
             self.baseline = baseline;
         }
         self.scope = defaults.paths;
+    }
+
+    /// The features `pkg`'s surface builds with: `--features`, else what the
+    /// package's tables resolve.
+    fn features_of(&self, pkg: &str) -> Option<&str> {
+        let own = self.package_features.get(pkg);
+        self.features.as_deref().or(own.map(String::as_str))
     }
 
     /// Fill the packages from `[docs] package` when no `-p` was given.
@@ -113,6 +123,7 @@ pub fn run(args: &[String]) -> i32 {
         binds_only: false,
         allow_gone: false,
         features: None,
+        package_features: BTreeMap::new(),
         target: None,
         addr: None,
         branch: crate::trend::PAGES_BRANCH.into(),
@@ -181,8 +192,14 @@ pub fn run(args: &[String]) -> i32 {
             Err(e) => return err(&e),
         }
     }
-    match cfg.resolve(&a.pkgs, Group::Docs) {
-        Ok(defaults) => a.use_defaults(baseline_given, defaults),
+    match cfg.resolve_shared(&a.pkgs, Group::Docs) {
+        Ok((defaults, each)) => {
+            a.use_defaults(baseline_given, defaults);
+            a.package_features = each
+                .into_iter()
+                .filter_map(|(pkg, s)| Some((pkg, s.features?)))
+                .collect();
+        }
         Err(e) => return err(&e),
     }
 
@@ -435,7 +452,7 @@ fn build_surface(
     a: &DocsArgs,
     pkg: &str,
 ) -> Result<(surface::Surface, docs_support::DocsText, PathBuf), String> {
-    docs_support::surface_in(pkg, None, a.features.as_deref())
+    docs_support::surface_in(pkg, None, a.features_of(pkg))
 }
 
 /// Whether the scan covered every page of the repository's `[docs] paths`.
@@ -1007,7 +1024,7 @@ fn surface_diff(a: &DocsArgs) -> i32 {
         Err(e) => return err(&e.to_string()),
     };
     let old_surf = match invoke::with_merge_base_worktree(&refname, |wt| {
-        docs_support::surface_in(&pkg, Some(wt), a.features.as_deref())
+        docs_support::surface_in(&pkg, Some(wt), a.features_of(&pkg))
             .map(|(surface, _, _)| surface)
             .map_err(|e| format!("cannot build surface at {sha}: {e}"))
     }) {
@@ -1059,6 +1076,7 @@ mod tests {
         scan_at, single_package, takes_package, unscanned_marker_files,
     };
     use crate::{docs_binds, invoke};
+    use std::collections::BTreeMap;
 
     #[test]
     fn configured_package_fills_in_when_no_p_is_given() {
@@ -1120,6 +1138,23 @@ mod tests {
         };
         given.use_defaults(true, defaults);
         assert_eq!(given.baseline, "mine");
+    }
+
+    #[test]
+    fn a_surface_builds_with_its_own_packages_features_unless_a_flag_names_them() {
+        let own = BTreeMap::from([("full".to_string(), "full".to_string())]);
+        let a = DocsArgs {
+            package_features: own.clone(),
+            ..DocsArgs::default()
+        };
+        assert_eq!(a.features_of("full"), Some("full"));
+        assert_eq!(a.features_of("small"), None);
+        let flagged = DocsArgs {
+            features: Some("cli".into()),
+            package_features: own,
+            ..DocsArgs::default()
+        };
+        assert_eq!(flagged.features_of("full"), Some("cli"));
     }
 
     #[test]

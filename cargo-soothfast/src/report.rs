@@ -2,6 +2,7 @@
 //! recorded data: perf tables, trend charts, badges, and a living
 //! CHANGELOG.md whose Unreleased section is regenerated in place.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -95,7 +96,7 @@ fn render(args: &[String]) -> i32 {
         Ok(a) => a,
         Err(e) => return err(&e),
     };
-    match config::defaults(&a.pkg, Group::Docs) {
+    match config::defaults_shared(&a.pkg, Group::Docs) {
         Ok(defaults) => a.use_defaults(defaults),
         Err(e) => return err(&e),
     }
@@ -164,10 +165,14 @@ fn render(args: &[String]) -> i32 {
 
 /// One diff per package, headed by the crate name when there is more than
 /// one — an unattributed `ADDED foo::bar` says nothing about where it landed.
-fn surface_diffs(pkgs: &[String], refname: &str, features: Option<&str>) -> Result<String, String> {
+fn surface_diffs(
+    pkgs: &[String],
+    refname: &str,
+    features: impl Fn(&str) -> Option<String>,
+) -> Result<String, String> {
     let mut out = String::new();
     for pkg in pkgs {
-        let text = docs_support::surface_diff_text(pkg, refname, features)?;
+        let text = docs_support::surface_diff_text(pkg, refname, features(pkg).as_deref())?;
         if text.trim().is_empty() {
             continue;
         }
@@ -392,15 +397,19 @@ fn changelog_cmd(args: &[String]) -> i32 {
         Ok(g) => g,
         Err(e) => return err(&e),
     };
-    match config.resolve(&a.pkg, Group::Docs) {
-        Ok(defaults) => a.use_defaults(defaults),
+    let own: BTreeMap<String, String> = match config.resolve_shared(&a.pkg, Group::Docs) {
+        Ok((defaults, each)) => {
+            a.use_defaults(defaults);
+            each.into_iter()
+                .filter_map(|(pkg, s)| Some((pkg, s.features?)))
+                .collect()
+        }
         Err(e) => return err(&e),
-    }
-    a.features = resolve_features(
-        a.features.take(),
-        cfg.features.as_deref(),
-        gate_cfg.features.as_deref(),
-    );
+    };
+    let features_of = |pkg: &str| {
+        let table = a.features.clone().or_else(|| own.get(pkg).cloned());
+        resolve_features(table, cfg.features.as_deref(), gate_cfg.features.as_deref())
+    };
     let path = a.out.clone().unwrap_or_else(|| root.join("CHANGELOG.md"));
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
 
@@ -461,14 +470,14 @@ fn changelog_cmd(args: &[String]) -> i32 {
         Vec::new()
     };
     let (mut diff_text, mut entries) = match &a.against_ref {
-        Some(refname) => match surface_diffs(&a.pkg, refname, a.features.as_deref()) {
+        Some(refname) => match surface_diffs(&a.pkg, refname, features_of) {
             Ok(t) => (t, Vec::new()),
             Err(e) => return err(&e),
         },
         None => {
             let mut all = Vec::new();
             for pkg in &a.pkg {
-                match docs_support::surface_entries(pkg, a.features.as_deref()) {
+                match docs_support::surface_entries(pkg, features_of(pkg).as_deref()) {
                     Ok(e) => all.extend(e),
                     Err(e) => return err(&e),
                 }
