@@ -511,7 +511,8 @@ mod tests {
 
     #[test]
     fn shared_resolution_lets_targets_differ_and_shares_an_agreed_one() {
-        let text = "[package.a.docs]\ntarget = \"a-routes\"\n\n[package.b.docs]\ntarget = \"b-routes\"\n";
+        let text =
+            "[package.a.docs]\ntarget = \"a-routes\"\n\n[package.b.docs]\ntarget = \"b-routes\"\n";
         let (shared, _) = config(text)
             .resolve_shared(&pkgs(&["a", "b"]), Group::Docs)
             .unwrap();

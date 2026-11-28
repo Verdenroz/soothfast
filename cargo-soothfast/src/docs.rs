@@ -1076,6 +1076,7 @@ mod tests {
         scan_at, single_package, takes_package, unscanned_marker_files,
     };
     use crate::{docs_binds, invoke};
+    use std::collections::BTreeMap;
 
     #[test]
     fn configured_package_fills_in_when_no_p_is_given() {
@@ -1141,7 +1142,7 @@ mod tests {
 
     #[test]
     fn a_surface_builds_with_its_own_packages_features_unless_a_flag_names_them() {
-        let own = std::collections::BTreeMap::from([("full".to_string(), "full".to_string())]);
+        let own = BTreeMap::from([("full".to_string(), "full".to_string())]);
         let a = DocsArgs {
             package_features: own.clone(),
             ..DocsArgs::default()
